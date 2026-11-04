@@ -1,0 +1,6 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.acta_google_calendar_token.json

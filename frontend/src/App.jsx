@@ -1,8 +1,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import "./index.css";
+import CalendarPage from "./CalendarPage";
+import TelegramDigestSettings from "./TelegramDigestSettings";
 
-const API_BASE_URL = "http://127.0.0.1:8000";
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
 
 function normalizeTask(item) {
   const owners = Array.isArray(item.suggested_owners)
@@ -70,6 +72,7 @@ const navItems = [
   { icon: "⚷", label: "Tasks" },
   { icon: "✳", label: "AI Assistant" },
   { icon: "▣", label: "Meetings" },
+  { icon: "▦", label: "Calendar" },
   { icon: "♧", label: "Team" },
   { icon: "↗", label: "Integrations" },
 ];
@@ -367,6 +370,7 @@ const commandItems = [
   { label: "Tasks", detail: "Review owners, approve and track work", icon: "✓", keywords: "action items approvals work" },
   { label: "AI Assistant", detail: "Turn meeting conversations into action", icon: "✳", keywords: "transcribe analyze extract ai" },
   { label: "Meetings", detail: "Record, upload and process meeting files", icon: "▣", keywords: "record audio video upload" },
+  { label: "Calendar", detail: "Manage ACTA and Google Calendar events", icon: "▦", keywords: "calendar schedule events deadlines google" },
   { label: "Team", detail: "Manage people, capacity and skills", icon: "♧", keywords: "employees members workload" },
   { label: "Integrations", detail: "Connect Telegram and Google Calendar", icon: "↗", keywords: "telegram calendar connect" },
 ];
@@ -665,32 +669,62 @@ async function createMeeting(event) {
     setSelectedMeetingId(createdMeeting.id);
 
     let successMessage = `Meeting “${createdMeeting.title || title}” berhasil dibuat.`;
-    if (addMeetingToCalendar) {
-      try {
-        const calendarResponse = await fetch(`${API_BASE_URL}/api/integrations/google-calendar/events`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            meeting_id: createdMeeting.id,
-            start_time: toJakartaIso(meetingStart),
-            end_time: toJakartaIso(meetingEnd),
-            timezone: "Asia/Jakarta",
-            description: meetingDescription,
-            location: meetingLocation,
-          }),
-        });
-        const calendarResult = await calendarResponse.json().catch(() => ({}));
-        if (!calendarResponse.ok) {
-          throw new Error(typeof calendarResult.detail === "string" ? calendarResult.detail : `Google Calendar gagal (HTTP ${calendarResponse.status}).`);
-        }
-        successMessage += " Event juga berhasil ditambahkan ke Google Calendar.";
-        if (calendarResult.data?.htmlLink) {
-          setCalendarEventLink(calendarResult.data.htmlLink);
-        }
-      } catch (calendarError) {
-        successMessage += ` Meeting tersimpan, tetapi sinkronisasi Calendar gagal: ${calendarError instanceof Error ? calendarError.message : "coba lagi dari Integrations."}`;
-      }
+    
+if (addMeetingToCalendar) {
+  try {
+    if (!meetingStart || !meetingEnd) {
+      throw new Error("Tanggal dan waktu meeting harus diisi.");
     }
+
+    const calendarResponse = await fetch(
+      `${API_BASE_URL}/api/calendar/events`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          title: createdMeeting.title || meetingTitle,
+          description: meetingDescription || "",
+          location: meetingLocation || "",
+          start_at: toJakartaIso(meetingStart),
+          end_at: toJakartaIso(meetingEnd),
+          timezone_name: "Asia/Jakarta",
+          linked_entity_type: "meeting",
+          linked_entity_id: createdMeeting.id,
+          destination: "both",
+        }),
+      }
+    );
+
+    const calendarResult = await calendarResponse.json().catch(() => ({}));
+
+    if (!calendarResponse.ok) {
+      throw new Error(
+        typeof calendarResult.detail === "string"
+          ? calendarResult.detail
+          : `Calendar gagal (HTTP ${calendarResponse.status}).`
+      );
+    }
+
+    successMessage +=
+      " Meeting berhasil ditambahkan ke ACTA Calendar dan permintaan sinkronisasi Google Calendar telah diproses.";
+
+    if (calendarResult.data?.google_event_id) {
+      setCalendarEventLink(
+        calendarResult.data.htmlLink || null
+      );
+    }
+  } catch (calendarError) {
+    successMessage +=
+      ` Meeting tersimpan, tetapi sinkronisasi Calendar gagal: ${
+        calendarError instanceof Error
+          ? calendarError.message
+          : "Silakan coba lagi."
+      }`;
+  }
+}
+
     setMeetingCreateResult(successMessage);
     await refreshMeetings(createdMeeting.id);
     await refreshMeetingFiles(createdMeeting.id);
@@ -1521,6 +1555,7 @@ async function refreshTaskRecommendations(task) {
               <span>＋</span> New meeting
             </button>
           </section>
+{activeNav === "Calendar" && <CalendarPage apiBaseUrl={API_BASE_URL} />}
 {activeNav === "Integrations" && (
   <section className="integrations-page">
     <div className="panel integrations-intro">
@@ -1604,6 +1639,7 @@ async function refreshTaskRecommendations(task) {
       </form>
       {calendarEventLink && <a className="calendar-event-link" href={calendarEventLink} target="_blank" rel="noreferrer">Open event in Google Calendar ↗</a>}
     </section>
+    <TelegramDigestSettings apiBaseUrl={API_BASE_URL} />
     <p className="integration-privacy-note">ACTA displays connection status only; it never sends API tokens to the frontend. Provider credentials must remain in the backend <code>.env</code> file.</p>
   </section>
 )}

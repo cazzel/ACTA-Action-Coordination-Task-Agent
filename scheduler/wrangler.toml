@@ -1,0 +1,8 @@
+name = "acta-daily-digest-scheduler"
+main = "src/index.js"
+compatibility_date = "2026-11-06"
+
+[triggers]
+# Every 15 minutes. The ACTA API checks each workspace's local timezone and
+# sends exactly once after its configured daily time.
+crons = ["*/15 * * * *"]

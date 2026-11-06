@@ -5,12 +5,14 @@ import httpx
 import re
 from pydantic import BaseModel, Field
 import logging
+import os
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from app.db.supabase import get_supabase_client
 from app.core.config import settings
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 from app.integrations import build_integrations_router, notify_telegram_task_event
+from app.deadline_parser import parse_explicit_deadline
 
 logger = logging.getLogger(__name__)
 
@@ -22,10 +24,11 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
+    allow_origins=list(dict.fromkeys([
         "http://localhost:5173",
         "http://127.0.0.1:5173",
-    ],
+        *[origin.strip() for origin in os.getenv("ACTA_CORS_ORIGINS", "").split(",") if origin.strip()],
+    ])),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -1007,6 +1010,7 @@ def extract_and_save_actions(payload: ExtractAndSaveRequest):
             "project_id": payload.project_id,
             "task": item["task"],
             "deadline_text": item.get("deadline"),
+            "deadline_at": parse_explicit_deadline(item.get("deadline")),
             "owner_mentioned": item.get("owner_mentioned"),
             "evidence": item.get("evidence"),
             "suggested_owners": item.get("suggested_owners", []),
@@ -1386,3 +1390,10 @@ from app.meeting_processing import build_meeting_processing_router
 app.include_router(build_meeting_processing_router())
 
 app.include_router(build_integrations_router())
+
+# ACTA Calendar, Google Calendar bridge, and scheduled Telegram task recap.
+from app.calendar_routes import build_calendar_router
+from app.telegram_digest import build_telegram_digest_router
+
+app.include_router(build_calendar_router())
+app.include_router(build_telegram_digest_router())

@@ -10,7 +10,15 @@
   },
   "dependencies": {
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "@fullcalendar/core": "^6.1.19",
+    "@fullcalendar/react": "^6.1.19",
+    "@fullcalendar/daygrid": "^6.1.19",
+    "@fullcalendar/timegrid": "^6.1.19",
+    "@fullcalendar/interaction": "^6.1.19",
+    "@fullcalendar/list": "^6.1.19",
+    "@fullcalendar/rrule": "^6.1.19",
+    "rrule": "^2.8.1"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",

@@ -4,7 +4,7 @@
 -- RLS is enabled with no client-facing policies. The backend should access
 -- these tables using a server-side secret key only; never expose it in the frontend.
 
-begin;
+begin;python --version
 
 create table if not exists public.companies (
   id text primary key,

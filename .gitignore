@@ -47,3 +47,18 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Local Google OAuth refresh token (never commit)
+.acta_google_calendar_token.json
+
+# ACTA local secrets and generated files
+.env
+.env.*
+!.env.example
+**/.acta_google_calendar_token.json
+**/.venv/
+**/venv/
+**/node_modules/
+**/__pycache__/
+*.py[cod]
+*.log

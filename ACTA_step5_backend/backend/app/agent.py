@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.db.supabase import get_supabase_client
+from app.deadline_parser import parse_explicit_deadline
 
 logger = logging.getLogger(__name__)
 
@@ -280,6 +281,7 @@ def build_agent_router(
                     "project_id": payload.project_id,
                     "task": task,
                     "deadline_text": deadline,
+                    "deadline_at": parse_explicit_deadline(deadline),
                     "owner_mentioned": owner,
                     "evidence": evidence,
                     "suggested_owners": suggestions,

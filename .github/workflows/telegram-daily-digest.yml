@@ -1,0 +1,32 @@
+name: ACTA Telegram Daily Digest
+
+on:
+  schedule:
+    # Run every 15 minutes; the backend checks each user's local send_time.
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+jobs:
+  send-due-digests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Trigger due Telegram digests
+        env:
+          ACTA_BACKEND_URL: ${{ secrets.ACTA_BACKEND_URL }}
+          ACTA_CRON_SECRET: ${{ secrets.ACTA_CRON_SECRET }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "$ACTA_BACKEND_URL" || -z "$ACTA_CRON_SECRET" ]]; then
+            echo "Missing ACTA_BACKEND_URL or ACTA_CRON_SECRET repository secret."
+            exit 1
+          fi
+
+          BASE_URL="${ACTA_BACKEND_URL%/}"
+          curl --fail-with-body --silent --show-error \
+            --retry 2 --retry-delay 5 --max-time 45 \
+            -X POST \
+            -H "X-ACTA-CRON-SECRET: ${ACTA_CRON_SECRET}" \
+            "${BASE_URL}/api/notifications/daily-digest/run-due"

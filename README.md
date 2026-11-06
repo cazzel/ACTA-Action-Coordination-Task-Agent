@@ -633,3 +633,8 @@ External services still depend on valid credentials, provider availability, and 
 ## License
 
 No license has been specified for this repository yet. All rights and permissions should be clarified before reuse or redistribution.
+
+
+## Calendar, Google Calendar, and Telegram Daily Recap
+
+The Calendar workspace and Telegram Daily Recap are integrated into the ACTA frontend and FastAPI backend. See [`docs/ACTA_CALENDAR_TELEGRAM_SETUP.md`](docs/ACTA_CALENDAR_TELEGRAM_SETUP.md) for the database migration, environment variables, Google OAuth, Cloudflare scheduled Worker, verification steps, and production limitations.

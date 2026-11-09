@@ -1,5 +1,6 @@
 
 import { useEffect, useRef, useState } from "react";
+import { apiFetch, demoFetch } from "./api.js";
 import "./index.css";
 import CalendarPage from "./CalendarPage";
 import TelegramDigestSettings from "./TelegramDigestSettings";
@@ -83,7 +84,26 @@ function localDateTimeAfter(minutesFromNow) {
   return localDate.toISOString().slice(0, 16);
 }
 
-function App() {
+function App({ onLogout, isDemo = false }) {
+  async function inviteTeammate() {
+    try {
+      const response = await apiFetch(`${API_BASE_URL}/api/auth/invitations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role: "member", expires_in_days: 7 }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Could not create an invitation.");
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(data.invite_url);
+        window.alert("Invitation link copied. Share it with your teammate; it expires in 7 days.");
+      } else {
+        window.prompt("Copy this invitation link:", data.invite_url);
+      }
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Could not create an invitation.");
+    }
+  }
 
 const [activeNav, setActiveNav] = useState("Overview");
 const [backendHealth, setBackendHealth] = useState("checking");
@@ -172,6 +192,82 @@ const [employeeForm, setEmployeeForm] = useState({
   availability_status: "available",
 });
 const [refreshingTaskId, setRefreshingTaskId] = useState("");
+const [demoWorkspace, setDemoWorkspace] = useState(null);
+const [demoPrompt, setDemoPrompt] = useState("Review the NOVA Q4 Product Launch meeting and project brief. Use the team skills and workload to prepare a logical execution plan. Identify task dependencies, bottlenecks, the 16-versus-18 November launch-date conflict, and the possible budget overrun. Keep the help-center implementation unassigned. Do not approve assignments, spending, or the launch date.");
+const [demoWorkPackage, setDemoWorkPackage] = useState(null);
+const [isResettingDemo, setIsResettingDemo] = useState(false);
+
+function mapDemoTask(item, employees = [], divisions = []) {
+  const divisionMap = new Map(divisions.map((division) => [String(division.id), division.name]));
+  const owners = employees.map((employee) => ({
+    employee_id: employee.id,
+    name: employee.name,
+    role: employee.role,
+    division_name: divisionMap.get(String(employee.division_id)) || employee.division_name || "Unassigned",
+    current_open_tasks: employee.current_open_tasks,
+    max_concurrent_tasks: employee.max_concurrent_tasks,
+    availability_status: employee.availability_status,
+    skills: employee.skills || [],
+  }));
+  return normalizeTask({ ...item, suggested_owners: owners, company_id: demoWorkspace?.company?.id || "nova-demo" });
+}
+
+async function fetchDemoWorkspace() {
+  const response = await demoFetch("/api/demo/workspace");
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(typeof result.detail === "string" ? result.detail : "Could not load the NOVA demo workspace.");
+  }
+  return result.workspace || {};
+}
+
+async function loadDemoWorkspace() {
+  const workspace = await fetchDemoWorkspace();
+  const employees = Array.isArray(workspace.employees) ? workspace.employees : [];
+  const divisions = Array.isArray(workspace.divisions) ? workspace.divisions : [];
+  const rows = Array.isArray(workspace.tasks) ? workspace.tasks : [];
+  const meetingRows = Array.isArray(workspace.meetings) ? workspace.meetings : [];
+  setDemoWorkspace(workspace);
+  setTasks(rows.map((item) => mapDemoTask(item, employees, divisions)));
+  setTeamMembers(employees.map((member) => ({
+    ...member,
+    division_name: divisions.find((division) => String(division.id) === String(member.division_id))?.name || member.division_name || "Unassigned",
+  })));
+  setTeamDivisions(divisions);
+  setMeetings(meetingRows);
+  setSelectedMeetingId((current) => meetingRows.some((meeting) => meeting.id === current) ? current : (meetingRows[0]?.id || ""));
+  const selected = meetingRows.find((meeting) => meeting.id === selectedMeetingId) || meetingRows[0];
+  setMeetingFiles(Array.isArray(selected?.files) ? selected.files : []);
+  setMeetingAnalysis(workspace.analysis || null);
+  setMeetingTranscriptPreview(workspace.analysis?.transcript || "");
+  if (workspace.analysis?.transcript) setTranscript(workspace.analysis.transcript);
+  setDemoWorkPackage(workspace.work_package || null);
+  if (workspace.company?.name) sessionStorage.setItem("acta_company_name", workspace.company.name);
+  return workspace;
+}
+
+async function resetDemoSession() {
+  if (!isDemo || isResettingDemo) return;
+  if (!window.confirm("Reset this NOVA demo workspace to its original sample data? Your changes in this demo session will be discarded.")) return;
+  setIsResettingDemo(true);
+  try {
+    const response = await demoFetch("/api/demo/reset", { method: "POST" });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.detail || "Could not reset the demo workspace.");
+    await loadDemoWorkspace();
+    setActiveNav("Overview");
+    setMeetingProcessingMessage("");
+    setMeetingProcessingError("");
+    setMeetingFileUploadResult("");
+    setMeetingFileUploadError("");
+    setMeetingCreateResult("");
+  } catch (error) {
+    window.alert(error instanceof Error ? error.message : "Could not reset demo.");
+  } finally {
+    setIsResettingDemo(false);
+  }
+}
+
 
 useEffect(() => {
   const handleGlobalShortcut = (event) => {
@@ -196,7 +292,7 @@ useEffect(() => {
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), 5000);
 
-  fetch(`${API_BASE_URL}/health`, { signal: controller.signal })
+  apiFetch(`${API_BASE_URL}/health`, { signal: controller.signal })
     .then((response) => {
       if (!response.ok) throw new Error(`Health check returned HTTP ${response.status}`);
       if (active) setBackendHealth("online");
@@ -227,19 +323,14 @@ useEffect(() => {
       setIsLoading(true);
       setLoadError("");
 
-      const response = await fetch(
-        `${API_BASE_URL}/api/action-items`
-      );
-
-      if (!response.ok) {
-        throw new Error(`Backend returned HTTP ${response.status}`);
-      }
-
-      const result = await response.json();
-      const items = Array.isArray(result.data) ? result.data : [];
-
-      if (!cancelled) {
-        setTasks(items.map(normalizeTask));
+      if (isDemo) {
+        await loadDemoWorkspace();
+      } else {
+        const response = await apiFetch(`${API_BASE_URL}/api/action-items`);
+        if (!response.ok) throw new Error(`Backend returned HTTP ${response.status}`);
+        const result = await response.json();
+        const items = Array.isArray(result.data) ? result.data : [];
+        if (!cancelled) setTasks(items.map(normalizeTask));
       }
     } catch (error) {
       if (!cancelled) {
@@ -261,7 +352,7 @@ useEffect(() => {
   return () => {
     cancelled = true;
   };
-}, []);
+}, [isDemo]);
 
 useEffect(() => {
   if (activeNav === "Meetings" || activeNav === "Integrations") {
@@ -408,7 +499,19 @@ async function refreshMeetings(preferredMeetingId = "") {
     setIsLoadingMeetings(true);
     setMeetingListError("");
 
-    const response = await fetch(`${API_BASE_URL}/api/meetings`);
+    if (isDemo) {
+      const workspace = await fetchDemoWorkspace();
+      const rows = Array.isArray(workspace.meetings) ? workspace.meetings : [];
+      setDemoWorkspace(workspace);
+      setMeetings(rows);
+      setSelectedMeetingId((currentId) => {
+        const desiredId = preferredMeetingId || currentId;
+        return desiredId && rows.some((meeting) => meeting.id === desiredId) ? desiredId : (rows[0]?.id || "");
+      });
+      return;
+    }
+
+    const response = await apiFetch(`${API_BASE_URL}/api/meetings`);
     const result = await response.json().catch(() => ({}));
 
     if (!response.ok) {
@@ -455,7 +558,15 @@ async function refreshMeetingFiles(meetingId) {
     setIsLoadingMeetingFiles(true);
     setMeetingFilesError("");
 
-    const response = await fetch(
+    if (isDemo) {
+      const workspace = await fetchDemoWorkspace();
+      const meeting = (workspace.meetings || []).find((item) => String(item.id) === String(meetingId));
+      setDemoWorkspace(workspace);
+      setMeetingFiles(Array.isArray(meeting?.files) ? meeting.files : []);
+      return;
+    }
+
+    const response = await apiFetch(
       `${API_BASE_URL}/api/meetings/${encodeURIComponent(meetingId)}/files`
     );
     const result = await response.json().catch(() => ({}));
@@ -488,6 +599,48 @@ async function refreshMeetingFiles(meetingId) {
 }
 
 async function processSelectedMeeting() {
+  if (isDemo) {
+    if (isProcessingMeeting) return;
+    try {
+      setIsProcessingMeeting(true);
+      setMeetingProcessingError("");
+      setMeetingProcessingMessage("Loading the supplied NOVA audio and project brief…");
+      setMeetingAnalysis(null);
+      setMeetingTranscriptPreview("");
+
+      const base = import.meta.env.BASE_URL || "/";
+      const [audioResponse, briefResponse] = await Promise.all([
+        fetch(`${base}demo-assets/NOVA_Kickoff_Meeting.m4a`),
+        fetch(`${base}demo-assets/NOVA_Q4_Product_Launch_Brief.pptx`),
+      ]);
+      if (!audioResponse.ok || !briefResponse.ok) {
+        throw new Error("The preloaded NOVA M4A or PPTX file is missing from frontend/public/demo-assets/. Deploy the demo assets with the frontend and retry.");
+      }
+      const [audioBlob, briefBlob] = await Promise.all([audioResponse.blob(), briefResponse.blob()]);
+      const form = new FormData();
+      form.append("audio_file", new File([audioBlob], "NOVA Kickoff Meeting.m4a", { type: "audio/mp4" }));
+      form.append("brief_file", new File([briefBlob], "NOVA_Q4_Product_Launch_Brief.pptx", { type: "application/vnd.openxmlformats-officedocument.presentationml.presentation" }));
+
+      setMeetingProcessingMessage("ACTA is transcribing the meeting and comparing it with the project brief…");
+      const response = await demoFetch("/api/demo/analyze", { method: "POST", body: form });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(typeof result.detail === "string" ? result.detail : "NOVA sample meeting analysis failed.");
+
+      setMeetingAnalysis(result.analysis || null);
+      setMeetingTranscriptPreview(result.analysis?.transcript || "");
+      setTranscript(result.analysis?.transcript || "");
+      setMeetingProcessingMessage(`Analysis complete. ${result.task_count || 0} draft task(s) are ready for review. No assignment or external action was approved.`);
+      await loadDemoWorkspace();
+      setActiveNav("Meetings");
+    } catch (error) {
+      setMeetingProcessingError(error instanceof Error ? error.message : "Could not analyze the preloaded NOVA meeting.");
+      setMeetingProcessingMessage("");
+    } finally {
+      setIsProcessingMeeting(false);
+    }
+    return;
+  }
+
   if (!selectedMeetingId) {
     setMeetingProcessingError("Pilih meeting terlebih dahulu.");
     return;
@@ -505,7 +658,7 @@ async function processSelectedMeeting() {
     setMeetingAnalysis(null);
     setMeetingTranscriptPreview("");
 
-    const extractionResponse = await fetch(
+    const extractionResponse = await apiFetch(
       `${API_BASE_URL}/api/meetings/${encodeURIComponent(selectedMeetingId)}/extract-text`,
       { method: "POST" }
     );
@@ -527,11 +680,11 @@ async function processSelectedMeeting() {
       `Teks berhasil diambil dari ${extractionResult.files_processed || 0} file. ACTA sedang menganalisis meeting...`
     );
 
-    const agentResponse = await fetch(`${API_BASE_URL}/api/agent/coordinate`, {
+    const agentResponse = await apiFetch(`${API_BASE_URL}/api/agent/coordinate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        company_id: selectedMeeting?.company_id || "nova",
+        company_id: sessionStorage.getItem("acta_company_id") || selectedMeeting?.company_id || "nova",
         project_id: null,
         transcript: extractedTranscript,
       }),
@@ -567,7 +720,7 @@ async function processSelectedMeeting() {
     }
     const savedSummary = summaryParts.join("\n\n").slice(0, 12000);
 
-    const saveResponse = await fetch(
+    const saveResponse = await apiFetch(
       `${API_BASE_URL}/api/meetings/${encodeURIComponent(selectedMeetingId)}/analysis`,
       {
         method: "PATCH",
@@ -602,7 +755,7 @@ async function processSelectedMeeting() {
     await refreshMeetings(selectedMeetingId);
     await refreshMeetingFiles(selectedMeetingId);
     try {
-      const taskResponse = await fetch(`${API_BASE_URL}/api/action-items`);
+      const taskResponse = await apiFetch(`${API_BASE_URL}/api/action-items`);
       if (taskResponse.ok) {
         const taskResult = await taskResponse.json();
         setTasks((Array.isArray(taskResult.data) ? taskResult.data : []).map(normalizeTask));
@@ -623,6 +776,10 @@ async function processSelectedMeeting() {
 
 async function createMeeting(event) {
   event.preventDefault();
+  if (isDemo) {
+    setMeetingCreateError("The public NOVA demo uses the preloaded kickoff meeting. Use the sample meeting card to analyze it.");
+    return;
+  }
   const title = meetingTitle.trim();
   if (!title) {
     setMeetingCreateError("Masukkan judul meeting terlebih dahulu.");
@@ -640,12 +797,12 @@ async function createMeeting(event) {
 
     // datetime-local values are local browser time. ACTA's workspace uses Asia/Jakarta.
     const toJakartaIso = (value) => value ? `${value}:00+07:00` : null;
-    const response = await fetch(`${API_BASE_URL}/api/meetings`, {
+    const response = await apiFetch(`${API_BASE_URL}/api/meetings`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         title,
-        company_id: "nova",
+        company_id: sessionStorage.getItem("acta_company_id") || "nova",
         source_type: "external_upload",
         meeting_date: addMeetingToCalendar ? toJakartaIso(meetingStart) : undefined,
       }),
@@ -676,7 +833,7 @@ if (addMeetingToCalendar) {
       throw new Error("Tanggal dan waktu meeting harus diisi.");
     }
 
-    const calendarResponse = await fetch(
+    const calendarResponse = await apiFetch(
       `${API_BASE_URL}/api/calendar/events`,
       {
         method: "POST",
@@ -741,6 +898,37 @@ if (addMeetingToCalendar) {
 async function handleExtractAndSave(event) {
   event.preventDefault();
 
+  if (isDemo) {
+    const instruction = demoPrompt.trim();
+    if (instruction.length < 10) {
+      setSubmitError("Please enter an instruction of at least 10 characters.");
+      return;
+    }
+    if (!demoWorkspace?.analysis) {
+      setSubmitError("Analyze the preloaded NOVA meeting first from the Meetings page.");
+      return;
+    }
+    try {
+      setIsSubmitting(true);
+      setSubmitError("");
+      const response = await demoFetch("/api/demo/coordinate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: instruction }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.detail || "ACTA could not prepare the execution plan.");
+      setDemoWorkPackage(result.work_package || null);
+      await loadDemoWorkspace();
+      setSubmitError("");
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : "ACTA coordination failed.");
+    } finally {
+      setIsSubmitting(false);
+    }
+    return;
+  }
+
   if (transcript.trim().length < 20) {
     setSubmitError("Please enter at least 20 characters.");
     return;
@@ -750,7 +938,7 @@ async function handleExtractAndSave(event) {
     setIsSubmitting(true);
     setSubmitError("");
 
-    const response = await fetch(
+    const response = await apiFetch(
       `${API_BASE_URL}/api/action-items/extract-and-save`,
       {
         method: "POST",
@@ -758,7 +946,7 @@ async function handleExtractAndSave(event) {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          company_id: "nova",
+          company_id: sessionStorage.getItem("acta_company_id") || "nova",
           transcript: transcript.trim(),
         }),
       }
@@ -807,8 +995,24 @@ async function approveTask(task) {
     return;
   }
 
+  if (isDemo) {
+    try {
+      const response = await demoFetch(`/api/demo/tasks/${encodeURIComponent(task.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "approved", selected_owner_id: selectedOwnerId }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.detail || "Demo task approval failed.");
+      await loadDemoWorkspace();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Could not approve demo task.");
+    }
+    return;
+  }
+
   try {
-    const response = await fetch(
+    const response = await apiFetch(
       `${API_BASE_URL}/api/action-items/${task.id}/approve`,
       {
         method: "PATCH",
@@ -840,8 +1044,24 @@ async function approveTask(task) {
 }
 
 async function updateTaskStatus(task, status) {
+  if (isDemo) {
+    try {
+      const response = await demoFetch(`/api/demo/tasks/${encodeURIComponent(task.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status, selected_owner_id: task.selectedOwnerId || null }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.detail || "Demo task update failed.");
+      await loadDemoWorkspace();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Could not update demo task.");
+    }
+    return;
+  }
+
   try {
-    const response = await fetch(
+    const response = await apiFetch(
       `${API_BASE_URL}/api/action-items/${task.id}/status`,
       {
         method: "PATCH",
@@ -1067,7 +1287,7 @@ async function uploadMeetingRecording() {
     formData.append("meeting_id", selectedMeetingId);
     formData.append("source_type", "browser_recording");
 
-    const response = await fetch(
+    const response = await apiFetch(
       `${API_BASE_URL}/api/meeting-files/upload`,
       {
         method: "POST",
@@ -1175,7 +1395,7 @@ async function uploadExternalMeetingFile() {
       formData.append("source_type", "external_upload");
 
       try {
-        const response = await fetch(`${API_BASE_URL}/api/meeting-files/upload`, {
+        const response = await apiFetch(`${API_BASE_URL}/api/meeting-files/upload`, {
           method: "POST",
           body: formData,
         });
@@ -1225,7 +1445,14 @@ async function loadIntegrationStatus() {
   try {
     setIsLoadingIntegrations(true);
     setIntegrationError("");
-    const response = await fetch(`${API_BASE_URL}/api/integrations/status`);
+    if (isDemo) {
+      setIntegrationStatus({
+        telegram: { configured: false, demo_disabled: true },
+        google_calendar: { configured: false, authorized: false, demo_disabled: true },
+      });
+      return;
+    }
+    const response = await apiFetch(`${API_BASE_URL}/api/integrations/status`);
     const result = await response.json().catch(() => ({}));
     if (!response.ok) {
       throw new Error(typeof result.detail === "string" ? result.detail : `Could not load integrations (HTTP ${response.status}).`);
@@ -1239,11 +1466,15 @@ async function loadIntegrationStatus() {
 }
 
 async function testTelegramIntegration() {
+  if (isDemo) {
+    setIntegrationNotice("Telegram delivery is disabled in the public demo. No external message was sent.");
+    return;
+  }
   try {
     setIsTestingTelegram(true);
     setIntegrationError("");
     setIntegrationNotice("");
-    const response = await fetch(`${API_BASE_URL}/api/integrations/telegram/test`, { method: "POST" });
+    const response = await apiFetch(`${API_BASE_URL}/api/integrations/telegram/test`, { method: "POST" });
     const result = await response.json().catch(() => ({}));
     if (!response.ok) {
       throw new Error(typeof result.detail === "string" ? result.detail : `Telegram test failed (HTTP ${response.status}).`);
@@ -1258,11 +1489,15 @@ async function testTelegramIntegration() {
 }
 
 async function connectGoogleCalendar() {
+  if (isDemo) {
+    setIntegrationNotice("Google Calendar authorization is disabled in the public demo. No external account was contacted.");
+    return;
+  }
   try {
     setIsConnectingCalendar(true);
     setIntegrationError("");
     setIntegrationNotice("");
-    const response = await fetch(`${API_BASE_URL}/api/integrations/google-calendar/auth-url`);
+    const response = await apiFetch(`${API_BASE_URL}/api/integrations/google-calendar/auth-url`);
     const result = await response.json().catch(() => ({}));
     if (!response.ok || !result.auth_url) {
       throw new Error(typeof result.detail === "string" ? result.detail : `Could not start Google Calendar authorization (HTTP ${response.status}).`);
@@ -1276,6 +1511,10 @@ async function connectGoogleCalendar() {
 
 async function createGoogleCalendarEvent(event) {
   event.preventDefault();
+  if (isDemo) {
+    setIntegrationNotice("External calendar writes are disabled in the public demo.");
+    return;
+  }
   if (!selectedMeetingId) {
     setIntegrationError("Pilih meeting ACTA yang akan dijadwalkan terlebih dahulu.");
     return;
@@ -1290,7 +1529,7 @@ async function createGoogleCalendarEvent(event) {
     setIntegrationError("");
     setIntegrationNotice("");
     setCalendarEventLink("");
-    const response = await fetch(`${API_BASE_URL}/api/integrations/google-calendar/events`, {
+    const response = await apiFetch(`${API_BASE_URL}/api/integrations/google-calendar/events`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1320,9 +1559,13 @@ async function loadTeamData() {
   try {
     setIsLoadingTeam(true);
     setTeamError("");
+    if (isDemo) {
+      await loadDemoWorkspace();
+      return;
+    }
     const [employeeResponse, divisionResponse] = await Promise.all([
-      fetch(`${API_BASE_URL}/api/employees`),
-      fetch(`${API_BASE_URL}/api/divisions`),
+      apiFetch(`${API_BASE_URL}/api/employees`),
+      apiFetch(`${API_BASE_URL}/api/divisions`),
     ]);
     const [employeeResult, divisionResult] = await Promise.all([
       employeeResponse.json().catch(() => ({})),
@@ -1373,6 +1616,10 @@ function openEmployeeEditor(member = null) {
 
 async function saveEmployee(event) {
   event.preventDefault();
+  if (isDemo) {
+    setTeamError("The NOVA demo team is read-only. Reset the demo to restore its sample data.");
+    return;
+  }
   const isNew = editingEmployee === "new";
   const splitTerms = (value) => value.split(",").map((item) => item.trim()).filter(Boolean);
   const payload = {
@@ -1398,7 +1645,7 @@ async function saveEmployee(event) {
     setIsSavingEmployee(true);
     setTeamError("");
     setTeamNotice("");
-    const response = await fetch(
+    const response = await apiFetch(
       isNew ? `${API_BASE_URL}/api/employees` : `${API_BASE_URL}/api/employees/${encodeURIComponent(editingEmployee)}`,
       {
         method: isNew ? "POST" : "PATCH",
@@ -1421,14 +1668,18 @@ async function saveEmployee(event) {
 }
 
 async function refreshTaskRecommendations(task) {
+  if (isDemo) {
+    alert("Owner recommendations in the NOVA demo are generated during meeting analysis. Run the sample analysis again to refresh them.");
+    return;
+  }
   try {
     setRefreshingTaskId(task.id);
-    const response = await fetch(`${API_BASE_URL}/api/action-items/${encodeURIComponent(task.id)}/refresh-recommendations`, { method: "POST" });
+    const response = await apiFetch(`${API_BASE_URL}/api/action-items/${encodeURIComponent(task.id)}/refresh-recommendations`, { method: "POST" });
     const result = await response.json().catch(() => ({}));
     if (!response.ok) {
       throw new Error(typeof result.detail === "string" ? result.detail : `Could not refresh owner suggestions (HTTP ${response.status}).`);
     }
-    const tasksResponse = await fetch(`${API_BASE_URL}/api/action-items`);
+    const tasksResponse = await apiFetch(`${API_BASE_URL}/api/action-items`);
     const tasksResult = await tasksResponse.json().catch(() => ({}));
     if (!tasksResponse.ok) {
       throw new Error(typeof tasksResult.detail === "string" ? tasksResult.detail : "Suggestions refreshed, but task list could not be reloaded.");
@@ -1456,11 +1707,15 @@ async function refreshTaskRecommendations(task) {
         <div className="workspace">
           <div className="workspace-avatar">N</div>
           <div className="workspace-info">
-            <strong>Nova Company</strong>
-            <span>Team workspace</span>
+            <strong>{sessionStorage.getItem("acta_company_name") || "Your Company"}</strong>
+            <span>{isDemo ? "Interactive demo workspace" : "Team workspace"}</span>
           </div>
           <span className="chevron">⌄</span>
         </div>
+
+        { !isDemo && ["owner", "admin"].includes(sessionStorage.getItem("acta_role")) && (
+          <button className="acta-invite-team-button" type="button" onClick={inviteTeammate}>＋ Invite teammate</button>
+        )}
 
         <div className="nav-label">MENU</div>
         <nav className="navigation">
@@ -1491,10 +1746,10 @@ async function refreshTaskRecommendations(task) {
             </button>
           </div>
           <div className="profile">
-            <div className="profile-avatar">AD</div>
+            <div className="profile-avatar">{isDemo ? "NV" : (sessionStorage.getItem("acta_user_email") || "U").slice(0, 2).toUpperCase()}</div>
             <div className="profile-info">
-              <strong>Admin</strong>
-              <span>Workspace admin</span>
+              <strong>{isDemo ? "Demo visitor" : (sessionStorage.getItem("acta_user_email") || "Workspace member").split("@")[0]}</strong>
+              <span>{isDemo ? "Isolated NOVA session" : "Workspace member"}</span>
             </div>
             <span className="chevron">•••</span>
           </div>
@@ -1527,9 +1782,19 @@ async function refreshTaskRecommendations(task) {
               </svg>
               {pendingReviewCount > 0 && <span className="notification-count">{pendingReviewCount > 99 ? "99+" : pendingReviewCount}</span>}
             </button>
-            <div className="top-avatar">AD</div>
+            <button className="filter-button" type="button" onClick={onLogout} title={isDemo ? "Exit demo" : "Sign out"}>{isDemo ? "Exit demo" : "Sign out"}</button>
+            {isDemo && <button className="demo-reset-topbar" type="button" onClick={resetDemoSession} disabled={isResettingDemo}>{isResettingDemo ? "Resetting…" : "↻ Reset demo"}</button>}
+            <div className="top-avatar">{isDemo ? "N" : (sessionStorage.getItem("acta_user_email") || "U").slice(0, 1).toUpperCase()}</div>
           </div>
         </header>
+
+        {isDemo && (
+          <div className="acta-demo-context-bar">
+            <span className="acta-demo-context-dot" />
+            <div><strong>NOVA DEMO WORKSPACE</strong><span>Same ACTA workspace interface · Synthetic company data · Changes isolated to this session</span></div>
+            <span className="acta-demo-context-label">DEMO MODE</span>
+          </div>
+        )}
 
         <div className="page-content" key={activeNav}>
           <section className="welcome-row">
@@ -1538,7 +1803,7 @@ async function refreshTaskRecommendations(task) {
               <div className="eyebrow">{new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" }).toUpperCase()}</div>
               <h1>
                 {activeNav === "Overview"
-                  ? `${greeting}, Admin`
+                  ? (isDemo ? `${greeting}, NOVA team` : `${greeting}, ${(sessionStorage.getItem("acta_user_email") || "there").split("@")[0]}`)
                   : activeNav}
                 <span className="wave"> ✦</span>
               </h1>
@@ -1555,7 +1820,7 @@ async function refreshTaskRecommendations(task) {
               <span>＋</span> New meeting
             </button>
           </section>
-{activeNav === "Calendar" && <CalendarPage apiBaseUrl={API_BASE_URL} />}
+{activeNav === "Calendar" && <CalendarPage apiBaseUrl={API_BASE_URL} isDemo={isDemo} demoFetch={demoFetch} />}
 {activeNav === "Integrations" && (
   <section className="integrations-page">
     <div className="panel integrations-intro">
@@ -1570,6 +1835,7 @@ async function refreshTaskRecommendations(task) {
       </button>
     </div>
 
+    {isDemo && <div className="nova-demo-integration-note"><strong>Public demo sandbox</strong><span>Telegram delivery and Google Calendar writes are disabled here. No message or event will be sent to a real account.</span></div>}
     {integrationError && <div className="meeting-feedback-error" role="alert">{integrationError}</div>}
     {integrationNotice && <div className="meeting-feedback-success" role="status">{integrationNotice}</div>}
 
@@ -1579,7 +1845,7 @@ async function refreshTaskRecommendations(task) {
           <div className="integration-logo telegram-logo">✈</div>
           <div className="integration-card-title"><h2>Telegram</h2><p>Task status notifications</p></div>
           <span className={`integration-state ${integrationStatus?.telegram?.configured ? "is-connected" : "is-disconnected"}`}>
-            {integrationStatus?.telegram?.configured ? "Configured" : "Setup required"}
+            {isDemo ? "Disabled in demo" : integrationStatus?.telegram?.configured ? "Configured" : "Setup required"}
           </span>
         </div>
         <p className="integration-description">ACTA can send a test message and notify the configured Telegram chat when tasks are approved, started, rejected, or completed. Notification failures will not undo saved task changes.</p>
@@ -1587,10 +1853,10 @@ async function refreshTaskRecommendations(task) {
           <div><span className={integrationStatus?.telegram?.configured ? "check-dot complete" : "check-dot"}>{integrationStatus?.telegram?.configured ? "✓" : "·"}</span>Bot token and chat ID configured on backend</div>
           <div><span className="check-dot">✓</span>Task lifecycle notification hooks installed</div>
         </div>
-        <button className="action-button integration-action" type="button" onClick={testTelegramIntegration} disabled={isTestingTelegram || !integrationStatus?.telegram?.configured}>
-          {isTestingTelegram ? "Sending test..." : "Send test notification"}
+        <button className="action-button integration-action" type="button" onClick={testTelegramIntegration} disabled={isDemo || isTestingTelegram || !integrationStatus?.telegram?.configured}>
+          {isDemo ? "Disabled in demo" : isTestingTelegram ? "Sending test..." : "Send test notification"}
         </button>
-        {!integrationStatus?.telegram?.configured && <p className="integration-setup-hint">Add <code>TELEGRAM_BOT_TOKEN</code> and <code>TELEGRAM_CHAT_ID</code> to the backend <code>.env</code>, restart FastAPI, then refresh status.</p>}
+        {!isDemo && !integrationStatus?.telegram?.configured && <p className="integration-setup-hint">Add <code>TELEGRAM_BOT_TOKEN</code> and <code>TELEGRAM_CHAT_ID</code> to the backend <code>.env</code>, restart FastAPI, then refresh status.</p>}
       </article>
 
       <article className="panel integration-card">
@@ -1598,7 +1864,7 @@ async function refreshTaskRecommendations(task) {
           <div className="integration-logo calendar-logo">▦</div>
           <div className="integration-card-title"><h2>Google Calendar</h2><p>Meeting scheduling</p></div>
           <span className={`integration-state ${integrationStatus?.google_calendar?.authorized ? "is-connected" : "is-disconnected"}`}>
-            {integrationStatus?.google_calendar?.authorized ? "Connected" : "Not connected"}
+            {isDemo ? "Disabled in demo" : integrationStatus?.google_calendar?.authorized ? "Connected" : "Not connected"}
           </span>
         </div>
         <p className="integration-description">Authorize a Google account once, then create or update a Calendar event for a selected ACTA meeting. Repeating the action updates the matching event instead of intentionally creating a duplicate.</p>
@@ -1606,10 +1872,10 @@ async function refreshTaskRecommendations(task) {
           <div><span className={integrationStatus?.google_calendar?.configured ? "check-dot complete" : "check-dot"}>{integrationStatus?.google_calendar?.configured ? "✓" : "·"}</span>OAuth client credentials configured</div>
           <div><span className={integrationStatus?.google_calendar?.authorized ? "check-dot complete" : "check-dot"}>{integrationStatus?.google_calendar?.authorized ? "✓" : "·"}</span>Google account authorized</div>
         </div>
-        <button className="action-button integration-action" type="button" onClick={connectGoogleCalendar} disabled={isConnectingCalendar}>
-          {isConnectingCalendar ? "Opening Google..." : integrationStatus?.google_calendar?.authorized ? "Reconnect Google Calendar" : "Connect Google Calendar"}
+        <button className="action-button integration-action" type="button" onClick={connectGoogleCalendar} disabled={isDemo || isConnectingCalendar}>
+          {isDemo ? "Disabled in demo" : isConnectingCalendar ? "Opening Google..." : integrationStatus?.google_calendar?.authorized ? "Reconnect Google Calendar" : "Connect Google Calendar"}
         </button>
-        {!integrationStatus?.google_calendar?.configured && <p className="integration-setup-hint">Add <code>GOOGLE_CALENDAR_CLIENT_ID</code> and <code>GOOGLE_CALENDAR_CLIENT_SECRET</code> to the backend <code>.env</code> and register the redirect URI shown in the install guide.</p>}
+        {!isDemo && !integrationStatus?.google_calendar?.configured && <p className="integration-setup-hint">Add <code>GOOGLE_CALENDAR_CLIENT_ID</code> and <code>GOOGLE_CALENDAR_CLIENT_SECRET</code> to the backend <code>.env</code> and register the redirect URI shown in the install guide.</p>}
       </article>
     </div>
 
@@ -1631,7 +1897,7 @@ async function refreshTaskRecommendations(task) {
         <div className="integration-form-field"><label htmlFor="calendar-location">Location (optional)</label><input id="calendar-location" type="text" value={calendarLocation} onChange={(event) => setCalendarLocation(event.target.value)} maxLength={500} placeholder="Meeting room or video call link" /></div>
         <div className="integration-form-field integration-field-wide"><label htmlFor="calendar-description">Description (optional)</label><textarea id="calendar-description" value={calendarDescription} onChange={(event) => setCalendarDescription(event.target.value)} maxLength={4000} rows={3} placeholder="Agenda or short meeting notes. Do not include sensitive details unless appropriate for your calendar." /></div>
         <div className="integration-form-actions integration-field-wide">
-          <button className="action-button" type="submit" disabled={isCreatingCalendarEvent || !integrationStatus?.google_calendar?.authorized || !selectedMeetingId}>
+          <button className="action-button" type="submit" disabled={isDemo || isCreatingCalendarEvent || !integrationStatus?.google_calendar?.authorized || !selectedMeetingId}>
             {isCreatingCalendarEvent ? "Saving event..." : "Create / update Calendar event"}
           </button>
           {!integrationStatus?.google_calendar?.authorized && <span>Connect Google Calendar above before creating an event.</span>}
@@ -1639,7 +1905,7 @@ async function refreshTaskRecommendations(task) {
       </form>
       {calendarEventLink && <a className="calendar-event-link" href={calendarEventLink} target="_blank" rel="noreferrer">Open event in Google Calendar ↗</a>}
     </section>
-    <TelegramDigestSettings apiBaseUrl={API_BASE_URL} />
+    {!isDemo && <TelegramDigestSettings apiBaseUrl={API_BASE_URL} />}
     <p className="integration-privacy-note">ACTA displays connection status only; it never sends API tokens to the frontend. Provider credentials must remain in the backend <code>.env</code> file.</p>
   </section>
 )}
@@ -1659,6 +1925,42 @@ async function refreshTaskRecommendations(task) {
         </p>
       </div>
     </div>
+
+    {isDemo && (
+      <section className="panel nova-preloaded-meeting-panel">
+        <div className="nova-preloaded-heading">
+          <div>
+            <span className="meeting-section-eyebrow">PRELOADED NOVA DEMO MATERIALS</span>
+            <h2>Q4 Product Launch Kickoff</h2>
+            <p>The sample company, team, project brief, and meeting recording are already available in this isolated workspace.</p>
+          </div>
+          <span className="nova-preloaded-status">READY TO ANALYZE</span>
+        </div>
+        <div className="nova-preloaded-assets">
+          <div className="nova-preloaded-asset">
+            <span className="nova-asset-type audio">M4A</span>
+            <div><strong>NOVA Kickoff Meeting</strong><small>Single-speaker meeting recording · 5 minutes · supplied demo audio</small></div>
+            <a href={`${import.meta.env.BASE_URL || "/"}demo-assets/NOVA_Kickoff_Meeting.m4a`} target="_blank" rel="noreferrer">Open ↗</a>
+          </div>
+          <audio className="nova-sample-audio" controls preload="metadata" src={`${import.meta.env.BASE_URL || "/"}demo-assets/NOVA_Kickoff_Meeting.m4a`}>
+            Your browser does not support embedded audio.
+          </audio>
+          <div className="nova-preloaded-asset">
+            <span className="nova-asset-type ppt">PPTX</span>
+            <div><strong>NOVA Q4 Product Launch Brief</strong><small>Project context · owners · milestones · budget · risks</small></div>
+            <a href={`${import.meta.env.BASE_URL || "/"}demo-assets/NOVA_Q4_Product_Launch_Brief.pptx`} target="_blank" rel="noreferrer">Open ↗</a>
+          </div>
+        </div>
+        <div className="nova-preloaded-action">
+          <span>ACTA will transcribe the M4A and compare it with the PPTX. Extracted tasks remain drafts until human approval.</span>
+          <button className="action-button meeting-process-button" type="button" onClick={processSelectedMeeting} disabled={isProcessingMeeting}>
+            {isProcessingMeeting ? "Analyzing sample…" : meetingAnalysis ? "↻ Analyze sample again" : "✳ Analyze preloaded meeting"}
+          </button>
+        </div>
+        {meetingProcessingError && <div className="meeting-feedback-error" role="alert">{meetingProcessingError}</div>}
+        {meetingProcessingMessage && <div className="meeting-feedback-success" role="status">{meetingProcessingMessage}</div>}
+      </section>
+    )}
 
     <section className="panel meeting-manager-panel">
       <div className="meeting-manager-heading">
@@ -1681,9 +1983,9 @@ async function refreshTaskRecommendations(task) {
             placeholder="e.g. Weekly product sync"
             maxLength={160}
             required
-            disabled={isCreatingMeeting}
+            disabled={isCreatingMeeting || isDemo}
           />
-          <button className="action-button" type="submit" disabled={isCreatingMeeting}>
+          <button className="action-button" type="submit" disabled={isCreatingMeeting || isDemo}>
             {isCreatingMeeting ? "Creating..." : "＋ Create meeting"}
           </button>
         </div>
@@ -1693,7 +1995,7 @@ async function refreshTaskRecommendations(task) {
             type="checkbox"
             checked={addMeetingToCalendar}
             onChange={(event) => setAddMeetingToCalendar(event.target.checked)}
-            disabled={isCreatingMeeting}
+            disabled={isCreatingMeeting || isDemo}
           />
           <span><strong>Add to Google Calendar</strong><small>Schedule this meeting and create its calendar event automatically.</small></span>
         </label>
@@ -1721,6 +2023,7 @@ async function refreshTaskRecommendations(task) {
         )}
       </form>
 
+      {isDemo && <p className="nova-demo-readonly-note">This demo starts with the preloaded NOVA kickoff meeting. Create-new-meeting and external storage actions are reserved for real workspaces.</p>}
       {meetingCreateError && <div className="meeting-feedback-error" role="alert">{meetingCreateError}</div>}
       {meetingCreateResult && <div className="meeting-feedback-success" role="status">{meetingCreateResult}</div>}
       {meetingListError && (
@@ -1898,7 +2201,7 @@ async function refreshTaskRecommendations(task) {
       type="button"
       className="recording-button"
       onClick={startMeetingRecording}
-      disabled={recordingStatus === "processing"}
+      disabled={isDemo || recordingStatus === "processing"}
     >
       {recordingStatus === "processing"
         ? "Preparing recording..."
@@ -1934,19 +2237,19 @@ async function refreshTaskRecommendations(task) {
       // Allow selecting the same file again later, if necessary.
       event.target.value = "";
     }}
-    disabled={isUploadingMeetingFile}
+    disabled={isUploadingMeetingFile || isDemo}
   />
 
   <div
     className={`meeting-file-dropzone ${isMeetingFileDragOver ? "is-dragging" : ""} ${isUploadingMeetingFile ? "is-disabled" : ""}`}
     onDragEnter={(event) => {
       event.preventDefault();
-      if (!isUploadingMeetingFile) setIsMeetingFileDragOver(true);
+      if (!isUploadingMeetingFile && !isDemo) setIsMeetingFileDragOver(true);
     }}
     onDragOver={(event) => {
       event.preventDefault();
       if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
-      if (!isUploadingMeetingFile) setIsMeetingFileDragOver(true);
+      if (!isUploadingMeetingFile && !isDemo) setIsMeetingFileDragOver(true);
     }}
     onDragLeave={(event) => {
       if (!event.currentTarget.contains(event.relatedTarget)) {
@@ -1956,12 +2259,12 @@ async function refreshTaskRecommendations(task) {
     onDrop={(event) => {
       event.preventDefault();
       setIsMeetingFileDragOver(false);
-      if (isUploadingMeetingFile) return;
+      if (isUploadingMeetingFile || isDemo) return;
       addMeetingFiles(event.dataTransfer?.files);
     }}
     onClick={(event) => {
       if (event.target.closest("button")) return;
-      if (!isUploadingMeetingFile) document.getElementById("meeting-file-input")?.click();
+      if (!isUploadingMeetingFile && !isDemo) document.getElementById("meeting-file-input")?.click();
     }}
     aria-label="Drag and drop meeting files here, or browse files"
   >
@@ -1975,7 +2278,7 @@ async function refreshTaskRecommendations(task) {
         event.stopPropagation();
         document.getElementById("meeting-file-input")?.click();
       }}
-      disabled={isUploadingMeetingFile}
+      disabled={isUploadingMeetingFile || isDemo}
     >
       Browse files
     </button>
@@ -2017,6 +2320,7 @@ async function refreshTaskRecommendations(task) {
     className="recording-button recording-upload-button"
     onClick={uploadExternalMeetingFile}
     disabled={
+      isDemo ||
       selectedMeetingFiles.length === 0 ||
       !selectedMeetingId ||
       isUploadingMeetingFile ||
@@ -2035,8 +2339,7 @@ async function refreshTaskRecommendations(task) {
 
   <div className="recording-privacy-note">
     <span>ⓘ</span>
-    Files are stored in private Supabase Storage.
-    Each file is limited to 20 MB.
+    {isDemo ? "The supplied M4A and PPTX are preloaded above. Demo file uploads are disabled to keep the public test isolated." : "Files are stored in private Supabase Storage. Each file is limited to 20 MB."}
   </div>
 </div>
 
@@ -2276,9 +2579,10 @@ async function refreshTaskRecommendations(task) {
         <h2>People behind the work.</h2>
         <p>Manage employee roles, skills, divisions, workload, and availability. ACTA uses these profiles to recommend owners for meeting action items.</p>
       </div>
-      <button className="action-button team-add-button" type="button" onClick={() => openEmployeeEditor()}>＋ Add team member</button>
+      {isDemo ? <span className="nova-demo-readonly-badge">NOVA sample team · Read only</span> : <button className="action-button team-add-button" type="button" onClick={() => openEmployeeEditor()}>＋ Add team member</button>}
     </div>
 
+    {isDemo && <div className="nova-demo-readonly-note">You are viewing NOVA's preloaded sample team. Employee profiles are read-only in the public demo; use AI Assistant to test skills and capacity-based recommendations.</div>}
     {teamError && <div className="team-feedback-error" role="alert">{teamError}</div>}
     {teamNotice && <div className="team-feedback-success" role="status">{teamNotice}</div>}
 
@@ -2323,7 +2627,7 @@ async function refreshTaskRecommendations(task) {
               <div className="team-member-main"><strong>{member.name}</strong><span>{member.role || "Role not set"} · {member.division_name}</span><small>{Array.isArray(member.skills) && member.skills.length ? member.skills.join(" · ") : "No skills recorded"}</small></div>
               <div className="team-member-workload"><strong>{Number(member.current_open_tasks || 0)} / {Number(member.max_concurrent_tasks || 0)}</strong><span>Open tasks</span></div>
               <span className={`team-availability ${member.availability_status || "unknown"}`}>{member.availability_status || "Unknown"}</span>
-              <button className="filter-button" type="button" onClick={() => openEmployeeEditor(member)}>Edit</button>
+              {!isDemo && <button className="filter-button" type="button" onClick={() => openEmployeeEditor(member)}>Edit</button>}
             </article>
           ))}
         </div>
@@ -2403,16 +2707,17 @@ async function refreshTaskRecommendations(task) {
           <span className="assistant-section-eyebrow">
             START WITH YOUR NOTES
           </span>
-          <h3>Meeting transcript</h3>
+          <h3>{isDemo ? "Coordination instructions" : "Meeting transcript"}</h3>
           <p>
-            Paste your transcript below to get started.
-            Longer notes are welcome.
+            {isDemo
+              ? "The supplied NOVA meeting has already been analyzed. Ask ACTA to prepare a work package using the transcript, project brief, team skills, and workload."
+              : "Paste your transcript below to get started. Longer notes are welcome."}
           </p>
         </div>
 
         <div className="assistant-input-type">
           <span>≡</span>
-          Text input
+          {isDemo ? "AI instruction" : "Text input"}
         </div>
       </div>
 
@@ -2424,22 +2729,22 @@ async function refreshTaskRecommendations(task) {
           className="assistant-field-label"
           htmlFor="meeting-transcript"
         >
-          Transcript content
+          {isDemo ? "Instruction to ACTA" : "Transcript content"}
           <span>Required</span>
         </label>
 
         <textarea
           id="meeting-transcript"
           className="assistant-transcript-input"
-          value={transcript}
-          onChange={(event) => setTranscript(event.target.value)}
-          placeholder={`Paste your meeting transcript here...
+          value={isDemo ? demoPrompt : transcript}
+          onChange={(event) => isDemo ? setDemoPrompt(event.target.value) : setTranscript(event.target.value)}
+          placeholder={isDemo ? "Tell ACTA what to plan, prioritize, or investigate…" : `Paste your meeting transcript here...
 
 For example:
 "The marketing team will prepare the launch campaign by Friday. Dimas will draft the campaign content, and Alya will review the strategy."`}
           required
-          minLength={20}
-          maxLength={12000}
+          minLength={isDemo ? 10 : 20}
+          maxLength={isDemo ? 5000 : 12000}
           rows={10}
           disabled={isSubmitting}
         />
@@ -2447,17 +2752,17 @@ For example:
         <div className="assistant-textarea-meta">
           <span className="assistant-input-tip">
             <span>ⓘ</span>
-            Include decisions, deadlines, and names when available.
+            {isDemo ? "Use the analyzed meeting and NOVA company context. Decisions remain subject to human review." : "Include decisions, deadlines, and names when available."}
           </span>
 
           <span
             className={
-              transcript.length > 11000
+              (isDemo ? demoPrompt.length > 4500 : transcript.length > 11000)
                 ? "assistant-char-count near-limit"
                 : "assistant-char-count"
             }
           >
-            {transcript.length.toLocaleString("en-US")} / 12,000
+            {(isDemo ? demoPrompt.length : transcript.length).toLocaleString("en-US")} / {isDemo ? "5,000" : "12,000"}
           </span>
         </div>
 
@@ -2476,23 +2781,35 @@ For example:
             <span className="assistant-review-icon">✓</span>
             <div>
               <strong>You remain in control</strong>
-              <p>Review suggested tasks before approving them.</p>
+              <p>{isDemo ? "ACTA prepares a draft. You decide which tasks to approve." : "Review suggested tasks before approving them."}</p>
             </div>
           </div>
 
           <button
             type="submit"
             className="assistant-submit-button"
-            disabled={isSubmitting}
+            disabled={isSubmitting || (isDemo && !demoWorkspace?.analysis)}
           >
             <span className="assistant-submit-icon">✳</span>
             {isSubmitting
-              ? "Analyzing transcript..."
-              : "Analyze with ACTA"}
+              ? (isDemo ? "Preparing work package..." : "Analyzing transcript...")
+              : (isDemo ? "Prepare execution plan" : "Analyze with ACTA")}
             {!isSubmitting && <span className="assistant-submit-arrow">→</span>}
           </button>
         </div>
       </form>
+      {isDemo && demoWorkPackage && (
+        <div className="nova-demo-work-package">
+          <div className="nova-demo-work-package-head"><span>DRAFT · HUMAN REVIEW REQUIRED</span><strong>Work package prepared</strong></div>
+          <h3>{demoWorkPackage.title || "NOVA Q4 Product Launch Execution Plan"}</h3>
+          <p>{demoWorkPackage.summary || "ACTA prepared a reviewable execution plan."}</p>
+          <div className="nova-demo-work-package-grid">
+            <article><h4>Recommended sequence</h4><ul>{(demoWorkPackage.recommended_sequence || []).map((item, index) => <li key={`seq-${index}`}>{typeof item === "string" ? item : JSON.stringify(item)}</li>)}</ul></article>
+            <article><h4>Bottlenecks & risks</h4><ul>{[...(demoWorkPackage.bottlenecks || []), ...(demoWorkPackage.risks || [])].map((item, index) => <li key={`risk-${index}`}>{typeof item === "string" ? item : JSON.stringify(item)}</li>)}</ul></article>
+            <article><h4>Open decisions</h4><ul>{(demoWorkPackage.open_decisions || []).map((item, index) => <li key={`decision-${index}`}>{typeof item === "string" ? item : JSON.stringify(item)}</li>)}</ul></article>
+          </div>
+        </div>
+      )}
     </section>
 
     <div className="assistant-process-heading">

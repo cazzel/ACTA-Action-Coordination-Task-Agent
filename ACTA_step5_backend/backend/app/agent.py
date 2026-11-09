@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.db.supabase import get_supabase_client
+from app.auth_context import current_company_id
 from app.deadline_parser import parse_explicit_deadline
 
 logger = logging.getLogger(__name__)
@@ -399,6 +400,7 @@ def build_agent_router(
 
     @router.post("/api/agent/coordinate")
     def coordinate(payload: CoordinateRequest):
+        payload.company_id = current_company_id(payload.company_id)
         if not settings.openrouter_api_key:
             raise HTTPException(status_code=503, detail="OpenRouter API key is not configured.")
 

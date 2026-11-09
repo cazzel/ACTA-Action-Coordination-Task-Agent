@@ -17,6 +17,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 
 from app.db.supabase import get_supabase_client
+from app.auth_context import current_company_id
 from app.deadline_parser import parse_explicit_deadline
 from app.integrations import GOOGLE_CALENDAR_API, _google_datetime, _google_request
 
@@ -153,6 +154,7 @@ def build_calendar_router() -> APIRouter:
         end: datetime | None = Query(default=None),
         company_id: str = Query(default=DEFAULT_COMPANY_ID, min_length=1, max_length=100),
     ):
+        company_id = current_company_id(company_id)
         try:
             query = get_supabase_client().table("calendar_events").select("*").eq("company_id", company_id)
             if start:
@@ -270,6 +272,7 @@ def build_calendar_router() -> APIRouter:
 
     @router.post("/events")
     def create_acta_event(payload: CalendarEventPayload):
+        payload.company_id = current_company_id(payload.company_id)
         start, end = _validate_range(payload)
         row = {
             "company_id": payload.company_id,

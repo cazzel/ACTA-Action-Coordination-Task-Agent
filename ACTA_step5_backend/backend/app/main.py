@@ -7,7 +7,11 @@ from pydantic import BaseModel, Field
 import logging
 import os
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
-from app.db.supabase import get_supabase_client
+from app.db.supabase import get_supabase_client, get_admin_supabase_client
+from app.auth_context import current_company_id
+from app.security import install_security_middleware
+from app.auth_routes import router as auth_router
+from app.demo_routes import router as demo_router
 from app.core.config import settings
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
@@ -31,8 +35,12 @@ app.add_middleware(
     ])),
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["*", "X-ACTA-DEMO-TOKEN", "Authorization"],
 )
+
+install_security_middleware(app)
+app.include_router(auth_router)
+app.include_router(demo_router)
 
 @app.get("/")
 def root():
@@ -91,7 +99,7 @@ def create_meeting(payload: CreateMeetingRequest):
             get_supabase_client()
             .table("meetings")
             .insert({
-                "company_id": payload.company_id,
+                "company_id": current_company_id(payload.company_id),
                 "title": title,
                 "source_type": payload.source_type,
                 "status": "draft",
@@ -265,6 +273,7 @@ def upload_meeting_file(
         )
 
     client = get_supabase_client()
+    storage_client = get_admin_supabase_client()
     storage_path = None
     storage_uploaded = False
 
@@ -276,7 +285,7 @@ def upload_meeting_file(
             meeting_response = (
                 client.table("meetings")
                 .insert({
-                    "company_id": "nova",
+                    "company_id": current_company_id(),
                     "title": title,
                     "source_type": source_type,
                     "status": "draft",
@@ -324,10 +333,10 @@ def upload_meeting_file(
         )
 
         storage_path = (
-            f"meetings/{meeting_id_value}/{uuid4().hex}{extension}"
+            f"companies/{company_id}/meetings/{meeting_id_value}/{uuid4().hex}{extension}"
         )
 
-        client.storage.from_(MEETING_FILES_BUCKET).upload(
+        storage_client.storage.from_(MEETING_FILES_BUCKET).upload(
             path=storage_path,
             file=file_bytes,
             file_options={
@@ -399,7 +408,7 @@ def upload_meeting_file(
         # Best-effort cleanup if Storage succeeded but registration failed.
         if storage_uploaded and storage_path:
             try:
-                client.storage.from_(MEETING_FILES_BUCKET).remove(
+                storage_client.storage.from_(MEETING_FILES_BUCKET).remove(
                     [storage_path]
                 )
             except Exception:
@@ -500,6 +509,7 @@ def create_employee(payload: EmployeeCreateRequest):
     if payload.availability_status not in VALID_EMPLOYEE_AVAILABILITY:
         raise HTTPException(status_code=400, detail="Invalid employee availability status.")
     try:
+        payload.company_id = current_company_id(payload.company_id)
         _validate_employee_division(client, payload.division_id, payload.company_id)
         slug = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_") or "member"
         employee_id = f"emp_{slug}_{uuid4().hex[:8]}"
@@ -990,6 +1000,7 @@ class ExtractAndSaveRequest(ExtractActionsRequest):
 
 @app.post("/api/action-items/extract-and-save")
 def extract_and_save_actions(payload: ExtractAndSaveRequest):
+    payload.company_id = current_company_id(payload.company_id)
     # 1. Ekstrak tugas menggunakan AI dan rekomendasikan PIC.
     extracted_result = extract_actions(payload)
     action_items = extracted_result.get("action_items", [])

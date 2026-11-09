@@ -21,7 +21,7 @@ load_dotenv(dotenv_path=Path(__file__).resolve().parents[1] / ".env", override=F
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from app.db.supabase import get_supabase_client
+from app.db.supabase import get_supabase_client, get_admin_supabase_client
 
 logger = logging.getLogger(__name__)
 
@@ -263,7 +263,7 @@ def build_meeting_processing_router() -> APIRouter:
                     continue
 
                 try:
-                    downloaded = client.storage.from_(file_row.get("storage_bucket") or MEETING_FILES_BUCKET).download(storage_path)
+                    downloaded = get_admin_supabase_client().storage.from_(file_row.get("storage_bucket") or MEETING_FILES_BUCKET).download(storage_path)
                     if isinstance(downloaded, bytes):
                         file_bytes = downloaded
                     elif hasattr(downloaded, "content"):

@@ -1,7 +1,8 @@
+import { apiFetch } from "./api.js";
 import { useCallback, useEffect, useState } from "react";
 
 const DEFAULTS = {
-  company_id: "nova",
+  company_id: sessionStorage.getItem("acta_company_id") || "nova",
   enabled: false,
   send_time: "07:00",
   timezone_name: "Asia/Jakarta",
@@ -42,8 +43,8 @@ export default function TelegramDigestSettings({ apiBaseUrl }) {
     setError("");
     try {
       const [settingsResponse, runsResponse] = await Promise.all([
-        fetch(`${apiBaseUrl}/api/notifications/daily-digest/preferences?company_id=nova`),
-        fetch(`${apiBaseUrl}/api/notifications/daily-digest/runs?company_id=nova&limit=15`),
+        apiFetch(`${apiBaseUrl}/api/notifications/daily-digest/preferences?company_id=${encodeURIComponent(sessionStorage.getItem("acta_company_id") || "nova")}`),
+        apiFetch(`${apiBaseUrl}/api/notifications/daily-digest/runs?company_id=${encodeURIComponent(sessionStorage.getItem("acta_company_id") || "nova")}&limit=15`),
       ]);
       const data = await readJson(settingsResponse, "Could not load digest settings");
       setConfigured(Boolean(data.configured));
@@ -51,6 +52,7 @@ export default function TelegramDigestSettings({ apiBaseUrl }) {
       setForm({
         ...DEFAULTS,
         ...preferences,
+        company_id: sessionStorage.getItem("acta_company_id") || preferences.company_id || "nova",
         send_time: String(preferences.send_time || DEFAULTS.send_time).slice(0, 5),
       });
       if (runsResponse.ok) {
@@ -78,7 +80,7 @@ export default function TelegramDigestSettings({ apiBaseUrl }) {
         ...form,
         due_soon_days: Math.max(1, Math.min(30, Number(form.due_soon_days) || 7)),
       };
-      const response = await fetch(`${apiBaseUrl}/api/notifications/daily-digest/preferences`, {
+      const response = await apiFetch(`${apiBaseUrl}/api/notifications/daily-digest/preferences`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -97,8 +99,8 @@ export default function TelegramDigestSettings({ apiBaseUrl }) {
     setError("");
     setMessage("");
     try {
-      const url = `${apiBaseUrl}/api/notifications/daily-digest/preview?company_id=nova&timezone_name=${encodeURIComponent(form.timezone_name)}`;
-      const response = await fetch(url);
+      const url = `${apiBaseUrl}/api/notifications/daily-digest/preview?company_id=${encodeURIComponent(sessionStorage.getItem("acta_company_id") || "nova")}&timezone_name=${encodeURIComponent(form.timezone_name)}`;
+      const response = await apiFetch(url);
       const data = await readJson(response, "Could not create preview");
       setPreview(data.message_preview || "No preview content.");
     } catch (e) {
@@ -111,7 +113,7 @@ export default function TelegramDigestSettings({ apiBaseUrl }) {
     setError("");
     setMessage("");
     try {
-      const response = await fetch(`${apiBaseUrl}/api/notifications/daily-digest/send-test?company_id=nova`, { method: "POST" });
+      const response = await apiFetch(`${apiBaseUrl}/api/notifications/daily-digest/send-test?company_id=${encodeURIComponent(sessionStorage.getItem("acta_company_id") || "nova")}`, { method: "POST" });
       const data = await readJson(response, "Could not send test digest");
       setMessage(`Test recap sent to Telegram. ${data.task_count || 0} task(s) included.`);
       await load();

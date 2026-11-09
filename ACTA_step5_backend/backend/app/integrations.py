@@ -1,11 +1,9 @@
-"""ACTA external integrations: Telegram task notifications and Google Calendar events.
+"""ACTA external integrations: Telegram notifications and company-scoped Google Calendar OAuth.
 
-Tokens and provider credentials are read from backend environment variables or a
-local token file. Secret values are never returned to the frontend.
+OAuth refresh tokens remain in the backend-only company_integrations table and are never returned to browsers.
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 import secrets
@@ -22,22 +20,20 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
-from app.db.supabase import get_supabase_client
+from app.db.supabase import get_supabase_client, get_admin_supabase_client
+from app.auth_context import current_company_id, get_current_user_id
 
 logger = logging.getLogger(__name__)
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 load_dotenv(dotenv_path=BACKEND_DIR / ".env", override=False)
 
-GOOGLE_TOKEN_PATH = Path(
-    os.getenv("GOOGLE_CALENDAR_TOKEN_FILE", str(BACKEND_DIR / ".acta_google_calendar_token.json"))
-)
 FRONTEND_URL = os.getenv("ACTA_FRONTEND_URL", "http://localhost:5173").rstrip("/")
 GOOGLE_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.events"
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_CALENDAR_API = "https://www.googleapis.com/calendar/v3"
 TELEGRAM_API_BASE = "https://api.telegram.org"
-_OAUTH_STATES: dict[str, float] = {}
+_OAUTH_STATES: dict[str, float] = {}  # retained only for compatibility with older in-process states
 
 
 class CalendarEventRequest(BaseModel):
@@ -53,10 +49,10 @@ def _telegram_configured() -> bool:
     return bool(os.getenv("TELEGRAM_BOT_TOKEN", "").strip() and os.getenv("TELEGRAM_CHAT_ID", "").strip())
 
 
-def send_telegram_message(text: str) -> dict[str, Any]:
+def send_telegram_message(text: str, chat_id: str | None = None) -> dict[str, Any]:
     """Send a Telegram message and verify the Bot API's `ok` response."""
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-    chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+    chat_id = (chat_id or os.getenv("TELEGRAM_CHAT_ID", "")).strip()
     if not token or not chat_id:
         return {"configured": False, "sent": False, "reason": "Telegram bot token or chat ID is not configured."}
 
@@ -89,9 +85,21 @@ def send_telegram_message(text: str) -> dict[str, Any]:
 
 
 def notify_telegram_task_event(event: str, item: dict[str, Any]) -> dict[str, Any]:
-    """Best-effort notification after a task state change; never undo a DB update."""
-    if not _telegram_configured():
-        return {"configured": False, "sent": False, "reason": "Telegram notifications are not configured."}
+    """Best-effort company-specific Telegram notification after a task state change."""
+    if not os.getenv("TELEGRAM_BOT_TOKEN", "").strip():
+        return {"configured": False, "sent": False, "reason": "Telegram bot token is not configured."}
+    company_id = str(item.get("company_id") or "").strip()
+    chat_id = ""
+    if company_id:
+        try:
+            prefs = get_supabase_client().table("telegram_digest_preferences").select("chat_id").eq("company_id", company_id).limit(1).execute().data or []
+            chat_id = str((prefs[0] if prefs else {}).get("chat_id") or "").strip()
+        except Exception as exc:
+            logger.warning("Could not load company Telegram destination (%s)", type(exc).__name__)
+    if not chat_id or chat_id == "NOT_CONFIGURED":
+        chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+    if not chat_id:
+        return {"configured": False, "sent": False, "reason": "No Telegram destination is configured for this company."}
 
     labels = {
         "approved": "Task approved",
@@ -104,7 +112,7 @@ def notify_telegram_task_event(event: str, item: dict[str, Any]) -> dict[str, An
     deadline = str(item.get("deadline_text") or "Not set").strip()
     message = f"ACTA — {label}\nTask: {task}\nDeadline: {deadline}\nTask ID: {item.get('id', 'unknown')}"
     try:
-        return send_telegram_message(message)
+        return send_telegram_message(message, chat_id=chat_id)
     except Exception as exc:
         # An external notification must never turn a successful DB mutation into an API error.
         logger.warning("Telegram task notification could not be sent (%s)", type(exc).__name__)
@@ -125,67 +133,61 @@ def _google_redirect_uri() -> str:
     ).strip()
 
 
-def _load_token_data() -> dict[str, Any]:
-    try:
-        data = json.loads(GOOGLE_TOKEN_PATH.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
-    except (OSError, json.JSONDecodeError):
+def _load_token_data(company_id: str | None = None, *, admin: bool = False) -> dict[str, Any]:
+    """Load Google OAuth credentials for one company; never share one local token file."""
+    scoped_company_id = company_id or current_company_id()
+    client = get_admin_supabase_client()
+    rows = client.table("company_integrations").select("config,status").eq("company_id", scoped_company_id).eq("provider", "google_calendar").limit(1).execute().data or []
+    if not rows or rows[0].get("status") != "connected":
         return {}
+    config = rows[0].get("config")
+    return config if isinstance(config, dict) else {}
 
 
-def _save_token_data(data: dict[str, Any]) -> None:
-    GOOGLE_TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
-    GOOGLE_TOKEN_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    try:
-        GOOGLE_TOKEN_PATH.chmod(0o600)
-    except OSError:
-        # Windows does not implement POSIX file modes; the file is still kept local.
-        pass
+def _save_token_data(data: dict[str, Any], company_id: str | None = None, *, admin: bool = False) -> None:
+    scoped_company_id = company_id or current_company_id()
+    client = get_admin_supabase_client()
+    client.table("company_integrations").upsert({
+        "company_id": scoped_company_id,
+        "provider": "google_calendar",
+        "config": data,
+        "status": "connected" if data.get("refresh_token") else "disconnected",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }, on_conflict="company_id,provider").execute()
 
 
-def _refresh_google_token(token_data: dict[str, Any]) -> dict[str, Any]:
+def _refresh_google_token(token_data: dict[str, Any], company_id: str | None = None, *, admin: bool = False) -> dict[str, Any]:
     refresh_token = str(token_data.get("refresh_token") or "").strip()
     client_id = os.getenv("GOOGLE_CALENDAR_CLIENT_ID", "").strip()
     client_secret = os.getenv("GOOGLE_CALENDAR_CLIENT_SECRET", "").strip()
     if not refresh_token or not client_id or not client_secret:
-        raise HTTPException(
-            status_code=503,
-            detail="Google Calendar is not authorized. Connect it from ACTA Integrations first.",
-        )
-
+        raise HTTPException(status_code=503, detail="Google Calendar is not authorized. Connect it from ACTA Integrations first.")
     try:
         response = httpx.post(
             GOOGLE_TOKEN_URL,
-            data={
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "refresh_token": refresh_token,
-                "grant_type": "refresh_token",
-            },
+            data={"client_id": client_id, "client_secret": client_secret, "refresh_token": refresh_token, "grant_type": "refresh_token"},
             timeout=httpx.Timeout(15.0, connect=5.0),
         )
     except httpx.HTTPError as exc:
         logger.warning("Google OAuth token refresh failed (%s)", type(exc).__name__)
         raise HTTPException(status_code=502, detail="Could not reach Google OAuth to refresh the Calendar token.") from exc
-
     if not response.is_success:
         logger.warning("Google OAuth token refresh returned HTTP %s", response.status_code)
         raise HTTPException(status_code=502, detail="Google Calendar authorization expired or was revoked. Reconnect the account.")
-
     payload = response.json()
     token_data["access_token"] = payload.get("access_token", "")
     token_data["expires_at"] = int(time.time()) + int(payload.get("expires_in", 3600)) - 60
     token_data["refresh_token"] = refresh_token
-    _save_token_data(token_data)
+    _save_token_data(token_data, company_id, admin=admin)
     return token_data
 
 
-def _google_access_token() -> str:
-    token_data = _load_token_data()
+def _google_access_token(company_id: str | None = None) -> str:
+    token_data = _load_token_data(company_id)
     if not token_data.get("refresh_token"):
-        raise HTTPException(status_code=503, detail="Google Calendar is not authorized. Connect it from ACTA Integrations first.")
+        raise HTTPException(status_code=503, detail="Google Calendar is not authorized for this company. Connect it from ACTA Integrations first.")
     if not token_data.get("access_token") or int(token_data.get("expires_at", 0)) <= int(time.time()) + 30:
-        token_data = _refresh_google_token(token_data)
+        token_data = _refresh_google_token(token_data, company_id)
     access_token = str(token_data.get("access_token") or "").strip()
     if not access_token:
         raise HTTPException(status_code=503, detail="Google Calendar access token is unavailable. Reconnect the account.")
@@ -193,13 +195,14 @@ def _google_access_token() -> str:
 
 
 def _google_request(method: str, url: str, **kwargs: Any) -> httpx.Response:
-    token = _google_access_token()
+    company_id = current_company_id()
+    token = _google_access_token(company_id)
     headers = dict(kwargs.pop("headers", {}) or {})
     headers["Authorization"] = f"Bearer {token}"
     try:
         response = httpx.request(method, url, headers=headers, timeout=httpx.Timeout(20.0, connect=5.0), **kwargs)
         if response.status_code == 401:
-            token_data = _refresh_google_token(_load_token_data())
+            token_data = _refresh_google_token(_load_token_data(company_id), company_id)
             headers["Authorization"] = f"Bearer {token_data.get('access_token', '')}"
             response = httpx.request(method, url, headers=headers, timeout=httpx.Timeout(20.0, connect=5.0), **kwargs)
     except HTTPException:
@@ -207,7 +210,6 @@ def _google_request(method: str, url: str, **kwargs: Any) -> httpx.Response:
     except httpx.HTTPError as exc:
         logger.warning("Google Calendar API request failed (%s)", type(exc).__name__)
         raise HTTPException(status_code=502, detail="Could not reach the Google Calendar API.") from exc
-
     if not response.is_success:
         logger.warning("Google Calendar API returned HTTP %s", response.status_code)
         if response.status_code in (401, 403):
@@ -237,7 +239,7 @@ def build_integrations_router() -> APIRouter:
 
     @router.get("/status")
     def integrations_status():
-        token_data = _load_token_data()
+        token_data = _load_token_data(current_company_id())
         calendar_authorized = bool(token_data.get("refresh_token"))
         provider = os.getenv("ACTA_TRANSCRIPTION_PROVIDER", "").strip().lower()
         if not provider:
@@ -262,11 +264,14 @@ def build_integrations_router() -> APIRouter:
         if not _google_configured():
             raise HTTPException(status_code=503, detail="Google Calendar OAuth is not configured. Add GOOGLE_CALENDAR_CLIENT_ID and GOOGLE_CALENDAR_CLIENT_SECRET to the backend .env file.")
         state = secrets.token_urlsafe(32)
-        now = time.time()
-        for old_state, created_at in list(_OAUTH_STATES.items()):
-            if now - created_at > 600:
-                _OAUTH_STATES.pop(old_state, None)
-        _OAUTH_STATES[state] = now
+        company_id = current_company_id()
+        state_hash = __import__("hashlib").sha256(state.encode("utf-8")).hexdigest()
+        now_utc = datetime.now(timezone.utc)
+        get_admin_supabase_client().table("acta_oauth_states").insert({
+            "provider": "google_calendar", "state_hash": state_hash,
+            "company_id": company_id, "created_by": get_current_user_id(),
+            "expires_at": (now_utc + timedelta(minutes=10)).isoformat(),
+        }).execute()
         query = urlencode({
             "client_id": os.getenv("GOOGLE_CALENDAR_CLIENT_ID", "").strip(),
             "redirect_uri": _google_redirect_uri(),
@@ -283,11 +288,19 @@ def build_integrations_router() -> APIRouter:
     def google_calendar_callback(code: str | None = None, state: str | None = None, error: str | None = None):
         if error:
             return RedirectResponse(f"{FRONTEND_URL}/?integration_error=google_calendar_denied", status_code=303)
-        if not code or not state or state not in _OAUTH_STATES:
+        if not code or not state:
             return RedirectResponse(f"{FRONTEND_URL}/?integration_error=google_calendar_state", status_code=303)
-        created_at = _OAUTH_STATES.pop(state, 0)
-        if not created_at or time.time() - created_at > 600:
+        state_hash = __import__("hashlib").sha256(state.encode("utf-8")).hexdigest()
+        admin = get_admin_supabase_client()
+        state_rows = admin.table("acta_oauth_states").select("id,company_id,expires_at").eq("state_hash", state_hash).eq("provider", "google_calendar").limit(1).execute().data or []
+        if not state_rows:
+            return RedirectResponse(f"{FRONTEND_URL}/?integration_error=google_calendar_state", status_code=303)
+        oauth_state = state_rows[0]
+        admin.table("acta_oauth_states").delete().eq("id", oauth_state["id"]).execute()
+        expires = datetime.fromisoformat(str(oauth_state["expires_at"]).replace("Z", "+00:00"))
+        if expires <= datetime.now(timezone.utc):
             return RedirectResponse(f"{FRONTEND_URL}/?integration_error=google_calendar_expired", status_code=303)
+        company_id = str(oauth_state["company_id"])
 
         try:
             response = httpx.post(
@@ -313,7 +326,7 @@ def build_integrations_router() -> APIRouter:
             tokens = response.json()
         except ValueError:
             return RedirectResponse(f"{FRONTEND_URL}/?integration_error=google_calendar_response", status_code=303)
-        previous = _load_token_data()
+        previous = _load_token_data(company_id, admin=True)
         refresh_token = tokens.get("refresh_token") or previous.get("refresh_token")
         if not refresh_token:
             return RedirectResponse(f"{FRONTEND_URL}/?integration_error=google_calendar_refresh", status_code=303)
@@ -325,9 +338,9 @@ def build_integrations_router() -> APIRouter:
             "token_type": tokens.get("token_type", "Bearer"),
         }
         try:
-            _save_token_data(token_data)
-        except OSError:
-            logger.exception("Could not save the Google Calendar token file")
+            _save_token_data(token_data, company_id, admin=True)
+        except Exception:
+            logger.exception("Could not save the Google Calendar token for this company")
             return RedirectResponse(f"{FRONTEND_URL}/?integration_error=google_calendar_storage", status_code=303)
         return RedirectResponse(f"{FRONTEND_URL}/?integration=google_calendar_connected", status_code=303)
 

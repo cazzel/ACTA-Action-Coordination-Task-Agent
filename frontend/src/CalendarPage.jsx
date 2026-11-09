@@ -65,7 +65,7 @@ function mapGoogleEvent(row) {
   };
 }
 
-export default function CalendarPage({ apiBaseUrl }) {
+export default function CalendarPage({ apiBaseUrl, isDemo = false, demoFetch }) {
   const calendarRef = useRef(null);
   const [source, setSource] = useState("all");
   const [events, setEvents] = useState([]);
@@ -98,12 +98,26 @@ export default function CalendarPage({ apiBaseUrl }) {
     setLoading(true);
     setError("");
     try {
+      const start = range.start.toISOString();
+      const end = range.end.toISOString();
+
+      if (isDemo) {
+        setGoogleConnected(false);
+        if (source === "google") {
+          setEvents([]);
+          return;
+        }
+        const response = await demoFetch(`/api/demo/calendar/events?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`);
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.detail || "Could not load NOVA demo calendar.");
+        setEvents((result.data || []).map(mapActaEvent));
+        return;
+      }
+
       const statusResponse = await fetch(`${apiBaseUrl}/api/integrations/status`);
       const statusData = await statusResponse.json().catch(() => ({}));
       setGoogleConnected(Boolean(statusData?.google_calendar?.authorized));
 
-      const start = range.start.toISOString();
-      const end = range.end.toISOString();
       const requests = [];
       if (source !== "google") {
         requests.push({ kind: "ACTA", promise: fetch(`${apiBaseUrl}/api/calendar/events?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`)
@@ -137,7 +151,7 @@ export default function CalendarPage({ apiBaseUrl }) {
     } finally {
       setLoading(false);
     }
-  }, [apiBaseUrl, range.start, range.end, source]);
+  }, [apiBaseUrl, range.start, range.end, source, isDemo, demoFetch]);
 
   useEffect(() => { loadCalendar(); }, [loadCalendar]);
 
@@ -215,6 +229,25 @@ export default function CalendarPage({ apiBaseUrl }) {
     setNotice("");
     try {
       const payload = buildPayload();
+      if (isDemo) {
+        if (payload.destination === "google") {
+          throw new Error("Google Calendar writes are disabled in the public demo. Choose ACTA Calendar to keep this event inside the NOVA session.");
+        }
+        const demoPath = editing
+          ? `/api/demo/calendar/events/${encodeURIComponent(editing.id)}`
+          : "/api/demo/calendar/events";
+        const demoResponse = await demoFetch(demoPath, {
+          method: editing ? "PATCH" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const demoResult = await demoResponse.json().catch(() => ({}));
+        if (!demoResponse.ok) throw new Error(demoResult.detail || "Could not save demo calendar event.");
+        setShowEditor(false);
+        setNotice("Event saved inside this isolated NOVA demo workspace.");
+        await loadCalendar();
+        return;
+      }
       const url = editing
         ? (editing.source === "google" ? `${apiBaseUrl}/api/calendar/google/events/${encodeURIComponent(editing.googleEventId)}` : `${apiBaseUrl}/api/calendar/events/${encodeURIComponent(editing.id)}`)
         : (payload.destination === "google" ? `${apiBaseUrl}/api/calendar/google/events` : `${apiBaseUrl}/api/calendar/events`);
@@ -237,6 +270,16 @@ export default function CalendarPage({ apiBaseUrl }) {
     setSaving(true);
     setError("");
     try {
+      if (isDemo) {
+        if (editing.source === "google") throw new Error("Google Calendar events cannot be deleted from the public demo.");
+        const response = await demoFetch(`/api/demo/calendar/events/${encodeURIComponent(editing.id)}`, { method: "DELETE" });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.detail || "Could not delete demo event.");
+        setShowEditor(false);
+        setNotice("Event deleted from this isolated NOVA demo workspace.");
+        await loadCalendar();
+        return;
+      }
       const url = editing.source === "google"
         ? `${apiBaseUrl}/api/calendar/google/events/${encodeURIComponent(editing.googleEventId)}`
         : `${apiBaseUrl}/api/calendar/events/${encodeURIComponent(editing.id)}`;
@@ -274,6 +317,28 @@ export default function CalendarPage({ apiBaseUrl }) {
       all_day: info.event.allDay, category: raw.category || "general", color: raw.color || DEFAULT_COLOR,
       location: raw.location || "", meeting_link: raw.meeting_link || "", recurrence_rule: raw.recurrence_rule || null,
     };
+    if (isDemo) {
+      if (sourceType === "google") {
+        info.revert();
+        setError("Google Calendar is not connected in the public demo. Only NOVA demo events can be moved.");
+        return;
+      }
+      try {
+        const response = await demoFetch(`/api/demo/calendar/events/${encodeURIComponent(raw.id)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.detail || "Could not move demo event.");
+        setNotice("NOVA demo event rescheduled.");
+        await loadCalendar();
+      } catch (err) {
+        info.revert();
+        setError(err instanceof Error ? err.message : "Could not move demo event.");
+      }
+      return;
+    }
     const url = sourceType === "google"
       ? `${apiBaseUrl}/api/calendar/google/events/${encodeURIComponent(raw.google_event_id || raw.id)}`
       : `${apiBaseUrl}/api/calendar/events/${encodeURIComponent(raw.id)}`;
@@ -290,6 +355,10 @@ export default function CalendarPage({ apiBaseUrl }) {
   }
 
   async function connectGoogle() {
+    if (isDemo) {
+      setNotice("Google Calendar authorization is disabled in the public demo. You can manage ACTA events in this isolated NOVA calendar.");
+      return;
+    }
     setError("");
     try {
       const response = await fetch(`${apiBaseUrl}/api/integrations/google-calendar/auth-url`);
@@ -300,6 +369,10 @@ export default function CalendarPage({ apiBaseUrl }) {
   }
 
   async function syncGoogle() {
+    if (isDemo) {
+      setNotice("Google Calendar sync is disabled in the public demo. No external calendar was accessed.");
+      return;
+    }
     setSaving(true);
     setError("");
     try {
@@ -341,7 +414,7 @@ export default function CalendarPage({ apiBaseUrl }) {
 
       {error && <div className="calendar-alert calendar-alert-error" role="alert">{error}</div>}
       {notice && <div className="calendar-alert calendar-alert-success" role="status">{notice}</div>}
-      {!googleConnected && source !== "acta" && <div className="calendar-connect-note"><strong>Google Calendar belum terhubung.</strong> ACTA Calendar tetap bisa digunakan sekarang. Hubungkan Google untuk menampilkan dan mengelola event Google dari halaman ini.</div>}
+      {!googleConnected && source !== "acta" && <div className="calendar-connect-note"><strong>{isDemo ? "NOVA demo calendar is isolated." : "Google Calendar belum terhubung."}</strong> {isDemo ? "Events created here are saved only in this demo session; Google Calendar access is disabled." : "ACTA Calendar tetap bisa digunakan sekarang. Hubungkan Google untuk menampilkan dan mengelola event Google dari halaman ini."}</div>}
 
       <div className="calendar-stat-strip">
         <div><span className="acta-dot"/><strong>{calendarEventCount.acta}</strong><small>ACTA events</small></div>

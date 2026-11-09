@@ -17,7 +17,8 @@ import httpx
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from app.db.supabase import get_supabase_client
+from app.db.supabase import get_supabase_client, get_admin_supabase_client
+from app.auth_context import current_company_id
 from app.deadline_parser import parse_explicit_deadline
 
 logger = logging.getLogger(__name__)
@@ -187,6 +188,7 @@ def build_telegram_digest_router() -> APIRouter:
 
     @router.get("/preferences")
     def get_preferences(company_id: str = Query(default=DEFAULT_COMPANY_ID)):
+        company_id = current_company_id(company_id)
         try:
             rows = get_supabase_client().table("telegram_digest_preferences").select("*").eq("company_id", company_id).limit(1).execute().data or []
             row = rows[0] if rows else None
@@ -209,6 +211,7 @@ def build_telegram_digest_router() -> APIRouter:
 
     @router.put("/preferences")
     def save_preferences(payload: DigestPreferencesPayload):
+        payload.company_id = current_company_id(payload.company_id)
         chat_id = (payload.chat_id or os.getenv("TELEGRAM_CHAT_ID", "")).strip()
         if payload.enabled and (not _telegram_token() or not chat_id):
             raise HTTPException(status_code=400, detail="Configure TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID on the backend before enabling daily digests.")
@@ -225,6 +228,7 @@ def build_telegram_digest_router() -> APIRouter:
 
     @router.get("/preview")
     def preview_digest(company_id: str = Query(default=DEFAULT_COMPANY_ID), timezone_name: str = Query(default=DEFAULT_TIMEZONE)):
+        company_id = current_company_id(company_id)
         zone = _safe_zone(timezone_name)
         day = datetime.now(zone).date()
         try:
@@ -248,6 +252,7 @@ def build_telegram_digest_router() -> APIRouter:
         company_id: str = Query(default=DEFAULT_COMPANY_ID, min_length=1, max_length=100),
         limit: int = Query(default=15, ge=1, le=50),
     ):
+        company_id = current_company_id(company_id)
         try:
             rows = get_supabase_client().table("telegram_digest_runs").select(
                 "id,digest_date,status,task_count,error_message,started_at,sent_at,message_id"
@@ -259,6 +264,7 @@ def build_telegram_digest_router() -> APIRouter:
 
     @router.post("/send-test")
     def send_test_digest(company_id: str = Query(default=DEFAULT_COMPANY_ID)):
+        company_id = current_company_id(company_id)
         rows = get_supabase_client().table("telegram_digest_preferences").select("*").eq("company_id", company_id).limit(1).execute().data or []
         prefs = rows[0] if rows else {}
         chat_id = str(prefs.get("chat_id") or os.getenv("TELEGRAM_CHAT_ID", "")).strip()
@@ -277,13 +283,13 @@ def build_telegram_digest_router() -> APIRouter:
         if not expected or not x_acta_cron_secret or not hmac.compare_digest(expected, x_acta_cron_secret):
             raise HTTPException(status_code=401, detail="Invalid or missing scheduler authentication.")
         try:
-            prefs_rows = get_supabase_client().table("telegram_digest_preferences").select("*").eq("enabled", True).execute().data or []
+            prefs_rows = get_admin_supabase_client().table("telegram_digest_preferences").select("*").eq("enabled", True).execute().data or []
         except Exception as exc:
             logger.exception("Could not load digest schedule")
             raise HTTPException(status_code=503, detail="Could not load daily digest schedules.") from exc
         results: list[dict[str, Any]] = []
         now_utc = datetime.now(timezone.utc)
-        client = get_supabase_client()
+        client = get_admin_supabase_client()
         for prefs in prefs_rows:
             run_id = None
             chat_id = str(prefs.get("chat_id") or os.getenv("TELEGRAM_CHAT_ID", "")).strip()

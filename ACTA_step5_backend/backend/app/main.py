@@ -31,6 +31,7 @@ app.add_middleware(
     allow_origins=list(dict.fromkeys([
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "https://acta-action-coordination-task-agent.netlify.app",
         *[origin.strip() for origin in os.getenv("ACTA_CORS_ORIGINS", "").split(",") if origin.strip()],
     ])),
     allow_credentials=True,

@@ -23,14 +23,18 @@ router = APIRouter(prefix="/api/demo", tags=["interactive-demo"])
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 
 
-def _seed_organization() -> dict[str, Any]:
-    org_path = Path(__file__).resolve().parents[3] / "organization.json"
+def _seed_organization():
+    org_path = Path(__file__).resolve().parent.parent / "organization.json"
+
     try:
         payload = json.loads(org_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        return payload
+    except Exception:
         logger.exception("Could not load organization.json demo seed")
-        raise HTTPException(status_code=503, detail="NOVA demo seed data is missing from the backend deployment.") from exc
-    return payload
+        raise HTTPException(
+            status_code=503,
+            detail="NOVA demo seed data is missing from the backend deployment."
+        )
 
 
 def _initial_state() -> dict[str, Any]:

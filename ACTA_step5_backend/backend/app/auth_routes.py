@@ -248,8 +248,23 @@ def create_invitation(payload: CreateInvitationPayload, request: Request):
 
 @router.post("/login")
 def login(payload: LoginPayload):
-    data = _auth_request("token?grant_type=password", {"email": str(payload.email).lower(), "password": payload.password})
-    return _session_response(data)
+    try:
+        data = _auth_request(
+            "token?grant_type=password",
+            {
+                "email": str(payload.email).lower(),
+                "password": payload.password
+            }
+        )
+
+        return _session_response(data)
+
+    except Exception as exc:
+        print(
+            f"[ACTA LOGIN ERROR] {type(exc).__name__}: {str(exc)}",
+            flush=True
+        )
+        raise
 
 
 @router.post("/refresh")

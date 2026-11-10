@@ -14,6 +14,10 @@ from app.auth_context import get_current_user_id
 from app.core.config import settings
 from app.db.supabase import get_admin_supabase_client
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/auth", tags=["authentication"])
 
 
@@ -147,33 +151,58 @@ def signup(payload: SignupPayload):
         company_name = (payload.company_name or "").strip()
         general_division_id = f"division_general_{uuid4().hex[:12]}"
         project_id = f"project_{uuid4().hex}"
+        stage = "companies"
         try:
             admin.table("companies").insert({
                 "id": company_id, "name": company_name, "industry": "",
                 "description": "ACTA workspace created during account registration.",
                 "is_fictional_demo_data": False, "schema_version": "1.0.0",
             }).execute()
+
+            stage = "divisions"
             admin.table("divisions").insert({
                 "id": general_division_id, "company_id": company_id,
                 "name": "General", "description": "Default division for the new ACTA workspace.",
                 "responsibilities": [], "keywords": [],
             }).execute()
+
+            stage = "projects"
             admin.table("projects").insert({
                 "id": project_id, "company_id": company_id,
                 "name": "General Operations", "description": "Starter project for your new ACTA workspace.",
                 "status": "active", "project_context_keywords": [],
             }).execute()
-            admin.table("project_divisions").insert({"project_id": project_id, "division_id": general_division_id}).execute()
+
+            stage = "project_divisions"
+            admin.table("project_divisions").insert({
+                "project_id": project_id,
+                "division_id": general_division_id
+            }).execute()
+
+            stage = "company_memberships"
             admin.table("company_memberships").insert({
                 "user_id": str(user_id), "company_id": company_id,
                 "role": "owner", "status": "active",
             }).execute()
-        except Exception as exc:
+
+        except Exception:
+            logger.exception(
+                "Workspace provisioning failed at stage=%s",
+                stage
+            )
+
             try:
                 admin.table("companies").delete().eq("id", company_id).execute()
             except Exception:
-                pass
-            raise HTTPException(status_code=503, detail="Your account was created, but workspace provisioning failed. Check the ACTA schema migration or contact support.") from exc
+                logger.exception(
+                    "Workspace cleanup failed for company_id=%s",
+                    company_id
+                )
+
+            raise HTTPException(
+                status_code=503,
+                detail="Your account was created, but workspace provisioning failed. Check the ACTA schema migration or contact support."
+            )
 
     if signup_data.get("access_token") or signup_data.get("session"):
         return {"requires_email_confirmation": False, **_session_response(signup_data)}

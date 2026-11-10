@@ -1,0 +1,301 @@
+{
+  "schema_version": "1.0.0",
+  "company": {
+    "id": "nova",
+    "name": "NOVA",
+    "industry": "B2B SaaS",
+    "description": "A fictional B2B SaaS company used to test ACTA's meeting-to-execution workflow.",
+    "is_fictional_demo_data": true
+  },
+  "divisions": [
+    {
+      "id": "product_strategy",
+      "name": "Product & Strategy",
+      "description": "Owns product direction, requirements, prioritization, and alignment between stakeholders.",
+      "responsibilities": ["product roadmap", "requirements", "product specification", "prioritization", "feature planning", "product launch", "stakeholder alignment"],
+      "keywords": ["product", "roadmap", "requirement", "feature", "PRD", "launch", "specification", "priority", "product strategy"]
+    },
+    {
+      "id": "engineering",
+      "name": "Engineering",
+      "description": "Builds, integrates, deploys, and maintains the company's software systems.",
+      "responsibilities": ["frontend development", "backend development", "API integration", "database", "deployment", "infrastructure", "software implementation", "analytics instrumentation"],
+      "keywords": ["frontend", "backend", "API", "database", "deploy", "coding", "integration", "website", "implementation", "analytics", "checkout", "payment gateway"]
+    },
+    {
+      "id": "ui_ux",
+      "name": "UI/UX",
+      "description": "Researches user needs and designs usable interfaces, flows, and design systems.",
+      "responsibilities": ["user research", "wireframes", "prototypes", "interface design", "usability", "design system", "user flow"],
+      "keywords": ["UI", "UX", "interface", "prototype", "wireframe", "Figma", "user research", "usability", "design system", "checkout design"]
+    },
+    {
+      "id": "marketing",
+      "name": "Marketing",
+      "description": "Plans and delivers campaigns, content, branding, advertising, and promotional communications.",
+      "responsibilities": ["campaign strategy", "social media", "content creation", "branding", "email marketing", "advertising", "promotion"],
+      "keywords": ["campaign", "content", "social media", "branding", "promotion", "ads", "email", "marketing", "launch campaign"]
+    },
+    {
+      "id": "sales_business_development",
+      "name": "Sales & Business Development",
+      "description": "Develops pipeline, manages client communication, and builds commercial partnerships.",
+      "responsibilities": ["lead generation", "sales demos", "proposals", "client communication", "partnerships", "negotiation", "sales pipeline"],
+      "keywords": ["lead", "client", "demo", "sales", "proposal", "partnership", "deal", "negotiation", "pipeline"]
+    },
+    {
+      "id": "finance",
+      "name": "Finance",
+      "description": "Manages budgeting, invoices, payments, financial analysis, procurement approval, and cost control.",
+      "responsibilities": ["budgeting", "invoicing", "payments", "financial analysis", "procurement approval", "cost control", "expense tracking"],
+      "keywords": ["budget", "invoice", "payment", "cost", "expense", "finance", "procurement", "approval", "financial analysis"]
+    },
+    {
+      "id": "people_operations",
+      "name": "People & Operations",
+      "description": "Coordinates people processes and internal operations, including hiring, scheduling, policies, and administration.",
+      "responsibilities": ["HR", "internal operations", "scheduling", "policy", "hiring", "employee administration", "internal events"],
+      "keywords": ["HR", "employee", "hiring", "schedule", "policy", "internal", "operations", "staff", "administration"]
+    },
+    {
+      "id": "customer_success",
+      "name": "Customer Success",
+      "description": "Supports customer onboarding, training, feedback, retention, and account health.",
+      "responsibilities": ["customer onboarding", "customer support", "customer feedback", "retention", "customer issues", "account health", "training"],
+      "keywords": ["customer", "onboarding", "support", "feedback", "retention", "account", "training", "customer issue", "account health"]
+    }
+  ],
+  "employees": [
+    {
+      "id": "emp_nadia",
+      "name": "Nadia",
+      "division_id": "product_strategy",
+      "role": "Product Manager",
+      "job_description": "Leads product roadmap planning, gathers requirements, and aligns product decisions with stakeholders.",
+      "specialization": ["product roadmap", "requirements", "stakeholder alignment"],
+      "skills": ["product management", "roadmap planning", "requirements analysis", "prioritization"],
+      "current_open_tasks": 3,
+      "max_concurrent_tasks": 8,
+      "availability_status": "available",
+      "previous_assignments": ["Product roadmap review"]
+    },
+    {
+      "id": "emp_farhan",
+      "name": "Farhan",
+      "division_id": "product_strategy",
+      "role": "Product Analyst",
+      "job_description": "Researches product opportunities, analyzes product data, and supports evidence-based product decisions.",
+      "specialization": ["product research", "data analysis"],
+      "skills": ["product research", "data analysis", "market analysis", "requirements documentation"],
+      "current_open_tasks": 2,
+      "max_concurrent_tasks": 7,
+      "availability_status": "available",
+      "previous_assignments": ["Product usage analysis"]
+    },
+    {
+      "id": "emp_budi",
+      "name": "Budi",
+      "division_id": "engineering",
+      "role": "Frontend Engineer",
+      "job_description": "Implements web interfaces and frontend behavior using React and related web technologies.",
+      "specialization": ["React", "frontend", "web implementation"],
+      "skills": ["React", "JavaScript", "frontend development", "landing pages", "web analytics implementation"],
+      "current_open_tasks": 6,
+      "max_concurrent_tasks": 8,
+      "availability_status": "limited",
+      "previous_assignments": ["Campaign A landing page", "Dashboard interface"]
+    },
+    {
+      "id": "emp_raka",
+      "name": "Raka",
+      "division_id": "engineering",
+      "role": "Backend Engineer",
+      "job_description": "Builds backend services, APIs, database integrations, and payment or third-party service integrations.",
+      "specialization": ["API", "database", "backend", "payment integration"],
+      "skills": ["Python", "REST API", "PostgreSQL", "backend development", "payment gateway integration"],
+      "current_open_tasks": 3,
+      "max_concurrent_tasks": 8,
+      "availability_status": "available",
+      "previous_assignments": ["Payment service integration", "Customer data API"]
+    },
+    {
+      "id": "emp_sinta",
+      "name": "Sinta",
+      "division_id": "ui_ux",
+      "role": "Product Designer",
+      "job_description": "Designs product interfaces and design systems, including checkout and other key user flows.",
+      "specialization": ["UI design", "design systems", "prototyping"],
+      "skills": ["Figma", "interface design", "prototyping", "design systems", "checkout UX"],
+      "current_open_tasks": 3,
+      "max_concurrent_tasks": 7,
+      "availability_status": "available",
+      "previous_assignments": ["Checkout redesign"]
+    },
+    {
+      "id": "emp_kevin",
+      "name": "Kevin",
+      "division_id": "ui_ux",
+      "role": "UX Researcher",
+      "job_description": "Conducts user research and usability studies to identify customer needs and interface problems.",
+      "specialization": ["user research", "usability testing"],
+      "skills": ["user interviews", "usability testing", "research synthesis", "user journey mapping"],
+      "current_open_tasks": 2,
+      "max_concurrent_tasks": 7,
+      "availability_status": "available",
+      "previous_assignments": ["Enterprise onboarding research"]
+    },
+    {
+      "id": "emp_alya",
+      "name": "Alya",
+      "division_id": "marketing",
+      "role": "Marketing Lead",
+      "job_description": "Leads campaign strategy, promotion planning, and coordination of marketing deliverables.",
+      "specialization": ["campaign strategy", "marketing planning"],
+      "skills": ["campaign planning", "marketing strategy", "branding", "performance marketing"],
+      "current_open_tasks": 4,
+      "max_concurrent_tasks": 8,
+      "availability_status": "available",
+      "previous_assignments": ["Product launch campaign"]
+    },
+    {
+      "id": "emp_dimas",
+      "name": "Dimas",
+      "division_id": "marketing",
+      "role": "Content Specialist",
+      "job_description": "Produces marketing content for social media, email, and campaign communication channels.",
+      "specialization": ["content", "social media"],
+      "skills": ["copywriting", "social media content", "email marketing", "content calendar"],
+      "current_open_tasks": 3,
+      "max_concurrent_tasks": 8,
+      "availability_status": "available",
+      "previous_assignments": ["Feature announcement content"]
+    },
+    {
+      "id": "emp_reza",
+      "name": "Reza",
+      "division_id": "sales_business_development",
+      "role": "Account Executive",
+      "job_description": "Manages prospects and clients, conducts sales demos, and advances opportunities through the sales pipeline.",
+      "specialization": ["client communication", "sales demos", "deals"],
+      "skills": ["sales", "account management", "client presentations", "pipeline management"],
+      "current_open_tasks": 5,
+      "max_concurrent_tasks": 8,
+      "availability_status": "available",
+      "previous_assignments": ["Enterprise customer demo"]
+    },
+    {
+      "id": "emp_citra",
+      "name": "Citra",
+      "division_id": "sales_business_development",
+      "role": "Business Development Specialist",
+      "job_description": "Develops partnerships, identifies business opportunities, and supports commercial negotiations.",
+      "specialization": ["partnerships", "business development"],
+      "skills": ["partnership development", "negotiation", "lead generation", "proposal writing"],
+      "current_open_tasks": 2,
+      "max_concurrent_tasks": 7,
+      "availability_status": "available",
+      "previous_assignments": ["Technology partner outreach"]
+    },
+    {
+      "id": "emp_fajar",
+      "name": "Fajar",
+      "division_id": "finance",
+      "role": "Finance Analyst",
+      "job_description": "Analyzes budgets and costs, prepares financial insights, and supports spending decisions.",
+      "specialization": ["budget", "cost analysis"],
+      "skills": ["budget analysis", "financial analysis", "cost control", "forecasting"],
+      "current_open_tasks": 3,
+      "max_concurrent_tasks": 7,
+      "availability_status": "available",
+      "previous_assignments": ["Product launch budget analysis"]
+    },
+    {
+      "id": "emp_nisa",
+      "name": "Nisa",
+      "division_id": "finance",
+      "role": "Finance Officer",
+      "job_description": "Processes invoices and payments and supports procurement and payment administration.",
+      "specialization": ["invoice", "payment", "procurement"],
+      "skills": ["invoice processing", "payment administration", "procurement records", "expense tracking"],
+      "current_open_tasks": 4,
+      "max_concurrent_tasks": 8,
+      "availability_status": "available",
+      "previous_assignments": ["Vendor invoice processing"]
+    },
+    {
+      "id": "emp_putri",
+      "name": "Putri",
+      "division_id": "people_operations",
+      "role": "HR & Operations Specialist",
+      "job_description": "Handles employee administration, hiring coordination, internal policies, and people operations.",
+      "specialization": ["people operations", "HR", "policy"],
+      "skills": ["HR administration", "hiring coordination", "policy documentation", "employee onboarding"],
+      "current_open_tasks": 3,
+      "max_concurrent_tasks": 7,
+      "availability_status": "available",
+      "previous_assignments": ["Internal onboarding checklist"]
+    },
+    {
+      "id": "emp_andi",
+      "name": "Andi",
+      "division_id": "people_operations",
+      "role": "Operations Specialist",
+      "job_description": "Coordinates internal schedules, operational processes, and cross-team logistics.",
+      "specialization": ["scheduling", "internal operations"],
+      "skills": ["schedule coordination", "process documentation", "event logistics", "operations"],
+      "current_open_tasks": 2,
+      "max_concurrent_tasks": 7,
+      "availability_status": "available",
+      "previous_assignments": ["Quarterly planning schedule"]
+    },
+    {
+      "id": "emp_tio",
+      "name": "Tio",
+      "division_id": "customer_success",
+      "role": "Customer Success Manager",
+      "job_description": "Manages customer onboarding, account health, retention, and customer training plans.",
+      "specialization": ["enterprise accounts", "onboarding", "retention"],
+      "skills": ["customer success", "enterprise onboarding", "account health", "customer training", "retention"],
+      "current_open_tasks": 4,
+      "max_concurrent_tasks": 8,
+      "availability_status": "available",
+      "previous_assignments": ["Acme enterprise onboarding"]
+    },
+    {
+      "id": "emp_maya",
+      "name": "Maya",
+      "division_id": "customer_success",
+      "role": "Customer Support Specialist",
+      "job_description": "Handles customer support requests, documents recurring issues, and helps customers use the product.",
+      "specialization": ["customer support", "product guidance"],
+      "skills": ["customer support", "issue triage", "product training", "support documentation"],
+      "current_open_tasks": 5,
+      "max_concurrent_tasks": 8,
+      "availability_status": "available",
+      "previous_assignments": ["Customer help-center updates"]
+    }
+  ],
+  "projects": [
+    {
+      "id": "project_q4_product_launch",
+      "name": "Q4 Product Launch",
+      "description": "NOVA's fictional cross-functional launch project used in ACTA's demo scenarios.",
+      "status": "active",
+      "participating_division_ids": ["product_strategy", "engineering", "ui_ux", "marketing", "finance", "customer_success"],
+      "project_context_keywords": ["Q4", "product launch", "landing page", "checkout", "campaign", "budget", "launch date"],
+      "note": "Project-specific dates and authoritative deadlines should be taken from the meeting transcript and project documents during testing; disagreement between sources should trigger conflict review rather than silent resolution."
+    }
+  ],
+  "data_notes": {
+    "purpose": "Seed data for the ACTA prototype and controlled competition demo.",
+    "all_people_and_company_records_are_fictional": true,
+    "workload_values_are_synthetic_demo_values": true,
+    "important_rule": "Do not auto-assign a task solely from keyword counts. Combine task meaning, role fit, project context, workload, and confidence; request human confirmation when evidence is ambiguous.",
+    "availability_values": ["available", "limited", "unavailable"],
+    "recommended_initial_confidence_policy": {
+      "auto_assign_at_or_above": 0.8,
+      "request_confirmation_from": 0.6,
+      "escalate_below": 0.6
+    }
+  }
+}

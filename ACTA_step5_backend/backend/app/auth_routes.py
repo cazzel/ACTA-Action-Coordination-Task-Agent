@@ -185,18 +185,21 @@ def signup(payload: SignupPayload):
                 "role": "owner", "status": "active",
             }).execute()
 
-        except Exception:
-            logger.exception(
-                "Workspace provisioning failed at stage=%s",
-                stage
+        except Exception as exc:
+            print(
+                f"[ACTA SIGNUP ERROR] Stage: {stage} | "
+                f"Error Type: {type(exc).__name__} | "
+                f"Details: {str(exc)}",
+                flush=True
             )
 
             try:
                 admin.table("companies").delete().eq("id", company_id).execute()
-            except Exception:
-                logger.exception(
-                    "Workspace cleanup failed for company_id=%s",
-                    company_id
+            except Exception as cleanup_exc:
+                print(
+                    f"[ACTA CLEANUP ERROR] {type(cleanup_exc).__name__}: "
+                    f"{str(cleanup_exc)}",
+                    flush=True
                 )
 
             raise HTTPException(
